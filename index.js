@@ -146,7 +146,6 @@ class SessionCostError extends Error {}
 
 function parseCliArgs() {
   const args = process.argv.slice(2);
-  let session = null;
   let listSessions = false;
   let json = false;
   let plan = "retail";
@@ -166,24 +165,10 @@ function parseCliArgs() {
     const arg = args[i];
     if (arg === "-h" || arg === "--help") {
       help = true;
-    } else if (arg === "-l" || arg === "--list-sessions") {
+    } else if (arg === "-l" || arg === "--list") {
       listSessions = true;
     } else if (arg === "-j" || arg === "--json") {
       json = true;
-    } else if (arg === "-s" || arg === "--session") {
-      const value = takeValue(i, arg);
-      session = parseInt(value, 10);
-      if (Number.isNaN(session)) {
-        process.stderr.write("error: --session must be a number\n");
-        process.exit(1);
-      }
-      i++;
-    } else if (arg.startsWith("--session=")) {
-      session = parseInt(arg.slice("--session=".length), 10);
-      if (Number.isNaN(session)) {
-        process.stderr.write("error: --session must be a number\n");
-        process.exit(1);
-      }
     } else if (arg === "-p" || arg === "--plan") {
       const next = args[i + 1];
       if (next === undefined || next.startsWith("-")) {
@@ -216,17 +201,46 @@ function parseCliArgs() {
 
   if (help) {
     process.stdout.write(
-      `Usage: agtop [options]
+      `agtop — an htop-like monitor for AI coding agent sessions
 
-Estimate the cost of local Codex and Claude Code sessions.
+Tracks Claude Code and Codex sessions running on your machine, showing
+real-time cost, token usage, tool invocations, and OS-level metrics.
 
-Options:
-  -s, --session <n>    Select session by number
-  -l, --list-sessions  List available sessions and exit
-  -j, --json           Emit the session list as JSON and exit
-  -d, --delay <secs>   Refresh interval in seconds (default: 2)
-  -p, --plan [plan]    Billing plan: retail, max, included, enterprise
-  -h, --help           Show this help
+USAGE
+  agtop                  Launch interactive TUI
+  agtop -l               List all sessions (table format)
+  agtop -j               Dump all sessions as JSON (for scripting)
+  agtop -j | jq .        Pipe to jq for filtering/analysis
+
+OPTIONS
+  -l, --list             List sessions in a table and exit
+  -j, --json             Dump full session data as JSON and exit
+  -p, --plan <plan>      Billing plan for cost display (default: retail)
+                           retail    Standard API pricing
+                           max       Claude Max (Claude usage = included)
+                           included  All usage marked as included
+  -d, --delay <secs>     Refresh interval in seconds (default: 2)
+  -h, --help             Show this help
+
+KEYBOARD SHORTCUTS (interactive mode)
+  j/k, arrows            Navigate sessions
+  Enter                  Open detail view
+  Tab                    Cycle bottom panel tabs (Info/System/Tool/Config)
+  \`                      Toggle Summary/Live list view
+  1/2/3/4                Jump to Info/System/Tool Activity/Config panel
+  F3 or /                Search/filter sessions
+  F6 or >                Sort-by panel
+  F5 or r                Force refresh
+  q or F10               Quit
+
+MOUSE
+  Click session rows, column headers, tabs, and menu bar items.
+  Hover over column headers for descriptions.
+
+NOTES
+  Pricing data is fetched from LiteLLM and cached for 24 hours.
+  Session data is read from ~/.claude/projects/ and ~/.codex/sessions/.
+  UI preferences (active tab, sort order, filters) persist across runs.
 `
     );
     process.exit(0);
@@ -244,7 +258,6 @@ Options:
   }
 
   return {
-    session,
     listSessions,
     json,
     plan,
@@ -5129,84 +5142,6 @@ function renderGroupedLines(codexSessions, claudeSessions, codexPlan, claudePlan
   return lines;
 }
 
-function printMetricsSummary(data) {
-  const m = safeMetrics(data);
-  if (m.tool_count === 0 && m.skill_count === 0 && m.web_fetch_count === 0 && m.web_search_count === 0 && m.mcp_tool_count === 0) return;
-  console.log();
-  console.log("Activity:");
-  if (m.tool_count > 0) {
-    const top = Object.entries(m.tools).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([n, c]) => `${c}x${n}`).join(", ");
-    console.log(`  Tools: ${m.tool_count} total (${top})`);
-  }
-  if (m.skill_count > 0) {
-    const top = Object.entries(m.skills).sort((a, b) => b[1] - a[1]).map(([n, c]) => `${c}x/${n}`).join(", ");
-    console.log(`  Skills: ${m.skill_count} total (${top})`);
-  }
-  if (m.web_fetch_count > 0) console.log(`  Web fetches: ${m.web_fetch_count}`);
-  if (m.web_search_count > 0) console.log(`  Web searches: ${m.web_search_count}`);
-  if (m.mcp_tool_count > 0) console.log(`  MCP calls: ${m.mcp_tool_count} (${m.mcp_tools.slice(0, 5).join(", ")})`);
-}
-
-function printCodexCost(session, data, plan) {
-  if (planIncludesProvider(plan, "codex")) {
-    console.log(`Billable cost: Not Billed (plan: ${plan})`);
-    console.log(`Retail-equivalent estimate: ${usd(data.costs.total)}`);
-    console.log(
-      `Retail breakdown: input ${usd(data.costs.input)} | cached input ${usd(data.costs.cached_input)} | output ${usd(data.costs.output)}`
-    );
-  } else {
-    console.log(`Total cost: ${usd(data.costs.total)}`);
-    console.log(
-      `Cost breakdown: input ${usd(data.costs.input)} | cached input ${usd(data.costs.cached_input)} | output ${usd(data.costs.output)}`
-    );
-  }
-  console.log();
-  console.log(`Provider: Codex`);
-  console.log(`Plan: ${plan}`);
-  console.log(`Session: ${session.session_id || "unknown"}`);
-  console.log(`Detected model: ${data.model || "unknown"}`);
-  console.log(
-    `Tokens: input (uncached) ${numberWithCommas(data.tokens.input)} | input (total) ${numberWithCommas(data.tokens.input_total)} | cached input ${numberWithCommas(data.tokens.cached_input)} | output ${numberWithCommas(data.tokens.output)} | reasoning output ${numberWithCommas(data.tokens.reasoning_output)} | total ${numberWithCommas(data.tokens.total)}`
-  );
-  console.log(
-    `Rates (USD / 1M tokens): input ${usd(data.rates.input)} | cached input ${usd(data.rates.cached_input)} | output ${usd(data.rates.output)}`
-  );
-  printMetricsSummary(data);
-}
-
-function printClaudeCost(session, data, plan) {
-  if (planIncludesProvider(plan, "claude")) {
-    console.log(`Billable cost: Not Billed (plan: ${plan})`);
-    console.log(`Retail-equivalent estimate: ${usd(data.costs.total)}`);
-    console.log(
-      `Retail breakdown: input ${usd(data.costs.input)} | cache write 5m ${usd(data.costs.cache_write_5m)} | cache write 1h ${usd(data.costs.cache_write_1h)} | cache read ${usd(data.costs.cache_read)} | output ${usd(data.costs.output)}`
-    );
-  } else {
-    console.log(`Total cost: ${usd(data.costs.total)}`);
-    console.log(
-      `Cost breakdown: input ${usd(data.costs.input)} | cache write 5m ${usd(data.costs.cache_write_5m)} | cache write 1h ${usd(data.costs.cache_write_1h)} | cache read ${usd(data.costs.cache_read)} | output ${usd(data.costs.output)}`
-    );
-  }
-  console.log();
-  console.log(`Provider: Claude`);
-  console.log(`Plan: ${plan}`);
-  console.log(`Session: ${session.session_id || "unknown"}`);
-  console.log(`Project: ${session.label_source || "unknown"}`);
-  console.log(
-    `Detected model${data.models.length > 1 ? "s" : ""}: ${data.models.join(", ")}`
-  );
-  console.log(
-    `Tokens: input ${numberWithCommas(data.tokens.input)} | cache write 5m ${numberWithCommas(data.tokens.cache_write_5m)} | cache write 1h ${numberWithCommas(data.tokens.cache_write_1h)} | cache read ${numberWithCommas(data.tokens.cache_read)} | output ${numberWithCommas(data.tokens.output)} | total ${numberWithCommas(data.tokens.total)}`
-  );
-  console.log("Rates (USD / 1M tokens):");
-  for (const model of data.models) {
-    const pricing = resolveClaudePricing(model);
-    console.log(
-      `  ${model}: input ${usd(String(pricing.input_per_million))} | cache write 5m ${usd(String(pricing.cache_write_5m_per_million))} | cache write 1h ${usd(String(pricing.cache_write_1h_per_million))} | cache read ${usd(String(pricing.cache_read_per_million))} | output ${usd(String(pricing.output_per_million))}`
-    );
-  }
-  printMetricsSummary(data);
-}
 
 // ---------------------------------------------------------------------------
 // Startup / shutdown
@@ -5332,11 +5267,11 @@ async function main() {
   await fetchLitellmPricing();
 
   // Non-interactive modes: -l, -j, -s
-  if (args.listSessions || args.json || args.session !== null) {
+  if (args.listSessions || args.json) {
     try {
       const plans = resolveProviderPlansFromArg(args.plan);
       if (!plans) {
-        process.stderr.write("error: -p select requires interactive mode (no -l/-j/-s)\n");
+        process.stderr.write("error: -p select requires interactive mode\n");
         return 1;
       }
       const [codexPlan, claudePlan] = plans;
@@ -5357,45 +5292,51 @@ async function main() {
         const jsonSessions = await Promise.all(allSessions.map(async (s) => {
           const data = await safeExtractSessionData(s);
           const m = safeMetrics(data);
-          return {
+          const plan = s.provider === "codex" ? codexPlan : claudePlan;
+          const incl = planIncludesProvider(plan, s.provider);
+          const obj = {
             provider: s.provider,
             session_id: s.session_id,
             started_at: s.started_at,
             last_active: s.last_active,
-            model: s.model,
-            project: s.label_source,
-            input_tokens: s.list_input_tokens ?? null,
-            output_tokens: s.list_output_tokens ?? null,
-            cost: s.list_total_cost ?? null,
-            tool_count: m.tool_count,
-            skill_count: m.skill_count,
-            web_fetch_count: m.web_fetch_count,
-            web_search_count: m.web_search_count,
-            mcp_tool_count: m.mcp_tool_count,
+            project: s.label_source || null,
+            model: s.model || (data && data.model) || null,
+            models: (data && data.models) || [s.model || null],
+            plan,
+            cost: {
+              total: s.list_total_cost ?? null,
+              included: incl,
+            },
+            tokens: {
+              input: s.list_input_tokens ?? null,
+              output: s.list_output_tokens ?? null,
+              total: ((s.list_input_tokens || 0) + (s.list_output_tokens || 0)) || null,
+            },
+            activity: {
+              tool_count: m.tool_count,
+              tools: m.tools,
+              skill_count: m.skill_count,
+              skills: m.skills,
+              web_fetch_count: m.web_fetch_count,
+              web_fetches: m.web_fetches,
+              web_search_count: m.web_search_count,
+              web_searches: m.web_searches,
+              mcp_tool_count: m.mcp_tool_count,
+              mcp_tools: m.mcp_tools,
+            },
           };
+          if (data && data.costs) {
+            obj.cost.breakdown = data.costs;
+          }
+          if (data && data.tokens) {
+            obj.tokens.detail = data.tokens;
+          }
+          if (data && data.rates) {
+            obj.rates = data.rates;
+          }
+          return obj;
         }));
         console.log(JSON.stringify(jsonSessions, null, 2));
-        saveDiskCache();
-        return 0;
-      }
-
-      if (args.session !== null) {
-        if (!allSessions.length) throw new SessionCostError("No sessions found.");
-        if (args.session < 1 || args.session > allSessions.length)
-          throw new SessionCostError(
-            `Session index ${args.session} is out of range (1-${allSessions.length}).`
-          );
-        const selectedSession = allSessions[args.session - 1];
-        if (!selectedSession.data_file)
-          throw new SessionCostError("Selected session is missing a data file.");
-        const selectedData = await safeExtractSessionData(selectedSession);
-        if (!selectedData)
-          throw new SessionCostError("Selected session could not be parsed.");
-        if (selectedSession.provider === "codex") {
-          printCodexCost(selectedSession, selectedData, codexPlan);
-        } else {
-          printClaudeCost(selectedSession, selectedData, claudePlan);
-        }
         saveDiskCache();
         return 0;
       }

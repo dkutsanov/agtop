@@ -14,9 +14,9 @@ An htop-like TUI for monitoring AI coding agent sessions. Tracks Claude Code and
 - **Last active tool** -- shows what a running agent is doing right now
 - **Overview charts** -- sparkline charts for aggregate spend, tokens, and CPU
 - **Detail view** -- full cost breakdown, token split, and per-model stats
-- **Tabbed panels** -- Info (identity, cost, tokens), System (CPU/memory charts), Agent Activity, Config (CLAUDE.md/AGENTS.md, memories, skills, MCP servers, permissions)
+- **Tabbed panels** -- Info (identity, cost, tokens), System (CPU/memory charts), Tool Activity, Config (CLAUDE.md/AGENTS.md, memories, skills, MCP servers, permissions)
 - **Mouse support** -- click to select sessions, sort by column, switch tabs, clickable menu bar; hover tooltips on column headers
-- **Non-interactive modes** -- list, JSON, and single-session output for scripting
+- **Non-interactive modes** -- list table and full JSON dump for scripting
 
 ## Requirements
 
@@ -27,23 +27,31 @@ An htop-like TUI for monitoring AI coding agent sessions. Tracks Claude Code and
 
 ```
 # Interactive TUI (default)
-node index.js
+agtop
 
-# List sessions
-node index.js -l
+# List sessions in a table
+agtop -l
 
-# JSON output
-node index.js -j
-
-# Show specific session
-node index.js -s 1
-
-# Set refresh interval (seconds)
-node index.js -d 3
+# Full JSON dump (pipe to jq for filtering)
+agtop -j
+agtop -j | jq '.[] | select(.cost.total > "1.00")'
 
 # Set billing plan
-node index.js -p max
+agtop -p max
+
+# Set refresh interval (seconds)
+agtop -d 3
 ```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-l`, `--list` | List sessions in a table and exit |
+| `-j`, `--json` | Dump full session data as JSON and exit |
+| `-p`, `--plan <plan>` | Billing plan for cost display (default: `retail`) |
+| `-d`, `--delay <secs>` | Refresh interval in seconds (default: `2`) |
+| `-h`, `--help` | Show help |
 
 ## Keyboard Shortcuts
 
@@ -53,7 +61,7 @@ node index.js -p max
 | `Enter` | Open detail view |
 | `Tab` | Cycle bottom panel tabs |
 | `Shift+Tab` or `` ` `` | Toggle Summary/Live view |
-| `1`/`2`/`3`/`4` | Switch to Info/System/Agent/Config panel |
+| `1`/`2`/`3`/`4` | Switch to Info/System/Tool Activity/Config panel |
 | `F3` or `/` | Search/filter sessions |
 | `F6` or `>` | Sort-by panel |
 | `P`/`M`/`T` | Sort by status/memory/cost |
@@ -65,9 +73,17 @@ node index.js -p max
 The `-p` flag controls how costs are displayed:
 
 - `retail` (default) -- standard API pricing
-- `max` / `max5` / `max20` -- Claude Max subscription (Claude usage marked as "included")
-- `plus` / `pro` -- Codex Pro subscription (Codex usage marked as "included")
+- `max` -- Claude Max subscription (Claude usage marked as "included")
 - `included` -- all usage marked as included
+
+## JSON Output
+
+`agtop -j` dumps comprehensive session data including:
+
+- Session identity (provider, ID, project, model)
+- Cost breakdown (total, per-category, rates)
+- Token counts (input, output, cached, detailed splits)
+- Activity metrics (tool invocations by name, skills, web fetches/searches, MCP calls)
 
 ## How It Works
 
