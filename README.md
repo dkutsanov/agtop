@@ -8,14 +8,14 @@ An htop-like TUI for monitoring AI coding agent sessions. Tracks Claude Code and
 
 - **Session discovery** -- automatically finds Claude Code (`~/.claude/projects/`) and Codex (`~/.codex/sessions/`) sessions
 - **Cost estimation** -- computes per-session spend using LiteLLM pricing data, with plan-aware billing (retail, max, included)
-- **Two list views** -- Summary (all sessions: duration, tokens, cost, tools, model) and Live (running sessions: CPU, memory, rates)
-- **Real-time rates** -- tokens/min, cost/min, tools/min over a 60-second rolling window
+- **Two list views** -- Summary (all sessions: duration, tokens, cost, tools, model) and Live (running sessions: CPU, memory, rates, incremental tool count)
+- **Real-time rates** -- tokens/min and cost/min via EMA smoothing; incremental tool count since startup
 - **OS process metrics** -- CPU%, memory, PID count for running sessions (macOS/Linux)
 - **Last active tool** -- shows what a running agent is doing right now
-- **Overview charts** -- sparkline charts for aggregate spend, tokens, CPU, and memory
+- **Overview charts** -- sparkline charts for aggregate spend, tokens, and CPU
 - **Detail view** -- full cost breakdown, token split, and per-model stats
-- **Tabbed panels** -- Info (identity, cost, tokens), System (CPU/memory charts), Agent Activity
-- **Mouse support** -- click to select sessions, sort by column, switch tabs; hover highlights
+- **Tabbed panels** -- Info (identity, cost, tokens), System (CPU/memory charts), Agent Activity, Config (CLAUDE.md/AGENTS.md, memories, skills, MCP servers, permissions)
+- **Mouse support** -- click to select sessions, sort by column, switch tabs, clickable menu bar; hover tooltips on column headers
 - **Non-interactive modes** -- list, JSON, and single-session output for scripting
 
 ## Requirements
@@ -52,8 +52,8 @@ node index.js -p max
 | `j`/`k` or arrows | Navigate sessions |
 | `Enter` | Open detail view |
 | `Tab` | Cycle bottom panel tabs |
-| `` ` `` | Toggle Summary/Live view |
-| `1`/`2`/`3` | Switch to Info/System/Agent panel |
+| `Shift+Tab` or `` ` `` | Toggle Summary/Live view |
+| `1`/`2`/`3`/`4` | Switch to Info/System/Agent/Config panel |
 | `F3` or `/` | Search/filter sessions |
 | `F6` or `>` | Sort-by panel |
 | `P`/`M`/`T` | Sort by status/memory/cost |
