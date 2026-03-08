@@ -4255,10 +4255,6 @@ function renderSystemPanel(session, data, panelW, rows) {
 
   const sessionKey = `${session.provider}:${session.session_id}`;
 
-  // Update history
-  pushHistory(_cpuHistory, sessionKey, pm.cpu);
-  pushHistory(_memHistory, sessionKey, pm.memory / (1024 * 1024)); // MB
-
   const cpuHist = _cpuHistory.get(sessionKey) || [];
   const memHist = _memHistory.get(sessionKey) || [];
 
@@ -6320,13 +6316,21 @@ async function loadSessions(state) {
       state._processMetrics = await collectProcessMetrics(state.sessions);
     } catch { /* best effort */ }
   }
-  // Attach process metrics to sessions
+  // Attach process metrics to sessions and accumulate chart history
   const matchedKeys = new Set();
   for (const s of state.sessions) {
     const key = `${s.provider}:${s.session_id}`;
     const pm = state._processMetrics.get(key);
-    if (pm) { s.process = pm; matchedKeys.add(key); }
-    else s.process = null;
+    if (pm) {
+      s.process = pm;
+      matchedKeys.add(key);
+      // Push history here (not in renderSystemPanel) so charts accumulate
+      // regardless of which panel is currently visible.
+      pushHistory(_cpuHistory, key, pm.cpu);
+      pushHistory(_memHistory, key, pm.memory / (1024 * 1024));
+    } else {
+      s.process = null;
+    }
   }
 
   // Create virtual sessions for running processes with no transcript match
