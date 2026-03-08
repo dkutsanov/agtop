@@ -2462,7 +2462,7 @@ const COL_TOKENS = {
   compare: (a, b) => ((a.list_input_tokens || 0) + (a.list_output_tokens || 0)) - ((b.list_input_tokens || 0) + (b.list_output_tokens || 0)),
 };
 const COL_COST = {
-  key: "cost", label: "$", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
+  key: "cost", label: "COST", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
   render: (s) => compactUsd(s.list_total_cost),
   compare: (a, b) => {
     const ca = a.list_total_cost === "included" ? -1 : parseFloat(a.list_total_cost || 0);
@@ -2546,12 +2546,12 @@ const COL_CTX = {
   },
 };
 const COL_COST_HOUR = {
-  key: "cost_hour", label: "$/1h", width: 7, align: "right", desc: "Cost in the last hour",
+  key: "cost_hour", label: "$/1H", width: 7, align: "right", desc: "Cost in the last hour",
   render: (s) => s.list_cost_hour > 0 ? compactUsd(s.list_cost_hour) : "",
   compare: (a, b) => (a.list_cost_hour || 0) - (b.list_cost_hour || 0),
 };
 const COL_COST_TODAY = {
-  key: "cost_today", label: "$/1d", width: 7, align: "right", desc: "Cost since midnight (local time)",
+  key: "cost_today", label: "$/1D", width: 7, align: "right", desc: "Cost since midnight (local time)",
   render: (s) => s.list_cost_today > 0 ? compactUsd(s.list_cost_today) : "",
   compare: (a, b) => (a.list_cost_today || 0) - (b.list_cost_today || 0),
 };
@@ -3657,12 +3657,16 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
     } else if (col.key === "cost_rate") {
       const r = session.list_cost_per_min || 0;
       colColor = r > 0.50 ? C.costRed : r > 0.10 ? C.costYellow : r > 0.001 ? C.chartBarLow : C.dimText;
-    } else if (col.key === "tools" || col.key === "tools_rate" || col.key === "in_tokens" || col.key === "out_tokens") {
+    } else if (col.key === "tools" || col.key === "tools_rate" || col.key === "in_tokens" || col.key === "out_tokens"
+            || col.key === "cost" || col.key === "cost_hour" || col.key === "cost_today") {
       const skey = session.provider + ":" + session.session_id;
       const cur = col.key === "tools" ? (session.list_tool_count || 0)
         : col.key === "tools_rate" ? (session.list_tools_since_start || 0)
         : col.key === "in_tokens" ? (session.list_input_tokens || 0)
-        : (session.list_output_tokens || 0);
+        : col.key === "out_tokens" ? (session.list_output_tokens || 0)
+        : col.key === "cost_hour" ? (session.list_cost_hour || 0)
+        : col.key === "cost_today" ? (session.list_cost_today || 0)
+        : parseFloat(session.list_total_cost || 0) || 0;
       if (!state._colPrev[skey]) state._colPrev[skey] = {};
       const prev = state._colPrev[skey][col.key];
       if (prev !== undefined && prev !== cur) {
