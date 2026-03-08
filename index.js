@@ -6001,6 +6001,12 @@ function handleEvent(event, state) {
         }
         return; // consume all clicks in config panel area
       }
+      // Consume any click inside the bottom panel area so it doesn't
+      // accidentally change the session selection.
+      if (state._tabBarRow && event.row >= state._tabBarRow) {
+        return;
+      }
+
       if (state._colHeaderRow && event.row === state._colHeaderRow) {
         // Click on column header → sort
         const colKey = columnAtX(event.col, state.hScroll, state);
