@@ -3402,10 +3402,12 @@ function ansiSlice(str, start, len) {
 }
 
 function padOrClip(text, width, align) {
-  if (text.length > width) {
-    return width <= 3 ? text.slice(0, width) : text.slice(0, width - 1) + "…";
+  const visLen = ansiLen(text);
+  if (visLen > width) {
+    return width <= 3 ? ansiSlice(text, 0, width) : ansiSlice(text, 0, width - 1) + "…";
   }
-  return align === "right" ? text.padStart(width) : text.padEnd(width);
+  const pad = " ".repeat(width - visLen);
+  return align === "right" ? pad + text : text + pad;
 }
 
 // ---------------------------------------------------------------------------
