@@ -5055,22 +5055,22 @@ function renderListTabBar(state, width) {
   const liveCount = state.sessions.filter((s) => !!s.process).length;
   const isLive = state.listTab === 1;
 
-  // Title: "Sessions (42)" or "Live Sessions (3/42)"
-  const title = isLive
-    ? `Sessions (${liveCount}/${totalCount})`
-    : `Sessions (${totalCount})`;
-  const titleEnd = 3 + title.length; // after "╭─ <title>"
+  // Title always uses the same format so nothing shifts when toggled
+  const title = `Sessions (${isLive ? liveCount + "/" : ""}${totalCount})`;
 
-  // Live button — placed after some gap
+  // Live button fixed to the right, just before the closing ╮
   const liveLabel = isLive ? "[Live ●]" : "[Live ○]";
-  const liveStart = titleEnd + 2;
-  const liveEnd = liveStart + liveLabel.length;
-  state._liveBtn = { col: liveStart + 3, len: liveLabel.length }; // 1-based col for click detection (+3 for ╭─ offset)
+  // Button sits at: width - 1 (╮) - 1 (space) - liveLabel.length - 1 (space)
+  const liveBtnCol = width - 1 - liveLabel.length - 1; // 1-based left edge
+  state._liveBtn = { col: liveBtnCol, len: liveLabel.length };
 
-  // Top border line
+  // Top border line: title on left, filler, live button, closing corner
+  const titlePart = BOX.tl + BOX.h + " " + title + " "; // ╭─ Sessions (N)
+  const titleLen = titlePart.length - 2; // subtract the 2 box chars for visual width calc (they're 1 wide each)
+  const fillerLen = Math.max(0, width - titleLen - liveLabel.length - 3); // 3 = " " + " " + "╮"
   let topLine = bc + BOX.tl + BOX.h + " " + RESET;
-  topLine += C.panelTitle + title + RESET;
-  topLine += "  ";
+  topLine += C.panelTitle + title + RESET + " ";
+  topLine += bc + BOX.h.repeat(fillerLen) + RESET + " ";
   if (isLive) {
     topLine += "\x1b[1;38;5;114m" + liveLabel + RESET;
   } else if (state._liveHover) {
@@ -5078,19 +5078,16 @@ function renderListTabBar(state, width) {
   } else {
     topLine += "\x1b[38;5;245m" + liveLabel + RESET;
   }
-  topLine += " ";
-  const remaining = Math.max(0, width - liveEnd - 2);
-  topLine += bc + BOX.h.repeat(remaining) + BOX.tr + RESET;
+  topLine += " " + bc + BOX.tr + RESET;
 
   // Underline rule
   const dimRule = "\x1b[38;5;238m";
-  let ruleLine = bc + BOX.v + RESET + dimRule + "──" + RESET;
-  ruleLine += C.borderHi + "━".repeat(title.length) + RESET;
-  ruleLine += dimRule + "──" + RESET;
-  ruleLine += dimRule + "─".repeat(liveLabel.length) + RESET;
+  const ruleInner = width - 2; // between ╰ and ╯ equivalent (│ on each side)
+  let ruleLine = bc + BOX.v + RESET;
   ruleLine += dimRule + "─" + RESET;
-  const ruleRemain = Math.max(0, width - liveEnd - 2);
-  ruleLine += dimRule + "─".repeat(ruleRemain) + RESET + bc + BOX.v + RESET;
+  ruleLine += C.borderHi + "━".repeat(title.length) + RESET;
+  ruleLine += dimRule + "─".repeat(Math.max(0, ruleInner - title.length - 1)) + RESET;
+  ruleLine += bc + BOX.v + RESET;
 
   return topLine + "\n" + ruleLine;
 }
