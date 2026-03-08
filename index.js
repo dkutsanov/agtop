@@ -5060,14 +5060,14 @@ function renderListTabBar(state, width) {
 
   // Live button fixed to the right, just before the closing ╮
   const liveLabel = isLive ? "[Live ●]" : "[Live ○]";
-  // Button sits at: width - 1 (╮) - 1 (space) - liveLabel.length - 1 (space)
-  const liveBtnCol = width - 1 - liveLabel.length - 1; // 1-based left edge
+  // Button sits at fixed right position regardless of title length
+  // 1-based: width - ╮(1) - space(1) - label = width - liveLabel.length - 1
+  const liveBtnCol = width - liveLabel.length - 1;
   state._liveBtn = { col: liveBtnCol, len: liveLabel.length };
 
-  // Top border line: title on left, filler, live button, closing corner
-  const titlePart = BOX.tl + BOX.h + " " + title + " "; // ╭─ Sessions (N)
-  const titleLen = titlePart.length - 2; // subtract the 2 box chars for visual width calc (they're 1 wide each)
-  const fillerLen = Math.max(0, width - titleLen - liveLabel.length - 3); // 3 = " " + " " + "╮"
+  // Top border: ╭─ <title> ─────── [Live ○] ╮
+  // Fixed visible widths: ╭(1) ─(1) space(1) title space(1) ─*filler space(1) label space(1) ╮(1) = title+label+7
+  const fillerLen = Math.max(0, width - title.length - liveLabel.length - 7);
   let topLine = bc + BOX.tl + BOX.h + " " + RESET;
   topLine += C.panelTitle + title + RESET + " ";
   topLine += bc + BOX.h.repeat(fillerLen) + RESET + " ";
