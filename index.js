@@ -1785,6 +1785,27 @@ async function annotateListCosts(sessions, plan) {
         else if (data.models && data.models.length) session.model = data.models[data.models.length - 1];
         session.costs_by_day  = data.costsByDay  || null;
         session.costs_by_hour = data.costsByHour || null;
+        // Pre-compute per-session spend for last-hour and today columns
+        if (data.costsByDay || data.costsByHour) {
+          const nowMs = Date.now();
+          const today = new Date(nowMs); today.setHours(0, 0, 0, 0);
+          const todayKey  = localDateKey(today);
+          const hourKey   = localHourKey(new Date(nowMs));
+          let hourCost = 0, todayCost = 0;
+          if (data.costsByHour) {
+            const h = data.costsByHour[hourKey];
+            if (h) hourCost = typeof h === "object" ? Object.values(h).reduce((a, b) => a + b, 0) : h;
+          }
+          if (data.costsByDay) {
+            for (const [day, models] of Object.entries(data.costsByDay)) {
+              if (day >= todayKey) {
+                todayCost += typeof models === "object" ? Object.values(models).reduce((a, b) => a + b, 0) : models;
+              }
+            }
+          }
+          session.list_cost_hour  = hourCost;
+          session.list_cost_today = todayCost;
+        }
       }
       if (planIncludesProvider(plan, session.provider || "")) {
         session.list_total_cost = "included";
@@ -2410,7 +2431,7 @@ function renderBrailleChart(values, totalWidth, chartRows, maxVal, colorMode, fo
 // Column definitions
 // ---------------------------------------------------------------------------
 
-const LIST_TABS = ["Sessions", "Live Sessions"];
+const LIST_TABS = ["Sessions"]; // Single unified list
 
 // Shared column defs
 const COL_STATUS = {
@@ -2466,7 +2487,7 @@ const COL_COST_RATE = {
 };
 const COL_CPU = {
   key: "cpu", label: "CPU%", width: 5, align: "right", desc: "CPU usage of session processes",
-  render: (s) => s.process ? `${s.process.cpu}` : "",
+  render: (s) => s.process ? `${s.process.cpu}` : "\x1b[38;5;238m─\x1b[0m",
   compare: (a, b) => ((a.process && a.process.cpu) || 0) - ((b.process && b.process.cpu) || 0),
 };
 const COL_MEM = {
@@ -2508,7 +2529,7 @@ const COMPACT_THRESHOLD = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 const COL_CTX = {
   key: "ctx", label: "CTX%", width: 6, align: "right", desc: "Context window usage (% until auto-compact)",
   render: (s) => {
-    if (!s.list_context) return "";
+    if (!s.list_context) return "\x1b[38;5;238m─\x1b[0m";
     if (s.list_context.compacting) return "COMPCT";
     const compactAt = s.list_context.max * COMPACT_THRESHOLD;
     const pct = Math.round((s.list_context.used / compactAt) * 100);
@@ -2524,27 +2545,37 @@ const COL_CTX = {
     return pb - pa;
   },
 };
+const COL_COST_HOUR = {
+  key: "cost_hour", label: "$/1h", width: 7, align: "right", desc: "Cost in the last hour",
+  render: (s) => s.list_cost_hour > 0 ? compactUsd(s.list_cost_hour) : "",
+  compare: (a, b) => (a.list_cost_hour || 0) - (b.list_cost_hour || 0),
+};
+const COL_COST_TODAY = {
+  key: "cost_today", label: "$/1d", width: 7, align: "right", desc: "Cost since midnight (local time)",
+  render: (s) => s.list_cost_today > 0 ? compactUsd(s.list_cost_today) : "",
+  compare: (a, b) => (a.list_cost_today || 0) - (b.list_cost_today || 0),
+};
 const COL_PROJECT = {
   key: "project", label: "PROJECT", width: 0, align: "left", flex: true, desc: "Working directory of the session",
   render: (s) => s._abbrevLabel || s.label_source || "unknown",
   compare: (a, b) => (a.label_source || "").localeCompare(b.label_source || ""),
 };
 
-const SUMMARY_COLUMNS = [
-  COL_STATUS, COL_LAST, COL_DURATION, COL_MODEL, COL_IN_TOKENS, COL_OUT_TOKENS, COL_COST, COL_TOOLS, COL_PROJECT,
+const SESSION_COLUMNS = [
+  COL_STATUS, COL_LAST, COL_DURATION, COL_MODEL, COL_COST, COL_COST_HOUR, COL_COST_TODAY, COL_TOOLS, COL_CTX, COL_CPU, COL_PROJECT,
 ];
 
-const LIVE_COLUMNS = [
-  COL_STATUS, COL_LAST, COL_CPU, COL_MEM, COL_CTX, COL_TOK_RATE, COL_COST_RATE, COL_TOOLS_RATE, COL_LAST_TOOL, COL_PROJECT,
-];
+// Legacy aliases kept for non-interactive output and sort restore
+const SUMMARY_COLUMNS = SESSION_COLUMNS;
+const LIVE_COLUMNS = SESSION_COLUMNS;
 
-/** Get active column set based on list tab */
-function activeColumns(state) {
-  return state.listTab === 1 ? LIVE_COLUMNS : SUMMARY_COLUMNS;
+/** Get active column set */
+function activeColumns(_state) {
+  return SESSION_COLUMNS;
 }
 
 // Back-compat alias used by non-interactive output
-const COLUMNS = SUMMARY_COLUMNS;
+const COLUMNS = SESSION_COLUMNS;
 
 // ---------------------------------------------------------------------------
 // Quota: fetch usage limits from provider APIs
@@ -3660,7 +3691,7 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
 function renderFooter(state, width) {
   const items = [
     ["F1", "Help", "f1"], ["F3", "Filter", "f3"], ["F5", "Refresh", "f5"],
-    ["F6", "SortBy", "f6"], ["F7", "Age", "f7"], ["Tab", "Panel", "tab"], ["`", "View", "backtick"], ["d", "Delete", "d_delete"], ["F10", "Quit", "f10"],
+    ["F6", "SortBy", "f6"], ["F7", "Age", "f7"], ["Tab", "Panel", "tab"], ["`", "Live", "backtick"], ["d", "Delete", "d_delete"], ["F10", "Quit", "f10"],
   ];
   let line = "";
   state._footerItems = [];
@@ -4789,7 +4820,7 @@ function renderHelpView(width, height) {
   lines.push(BOLD + "  Tabs:" + RESET);
   lines.push("    Tab              Cycle bottom panel tabs");
   lines.push("    1, 2, 3, 4, 5    Switch to Info/Cost/System/Tools/Config");
-  lines.push("    Shift+Tab / `    Toggle Sessions/Live Sessions view");
+  lines.push("    Shift+Tab / `    Toggle Live filter (show only running sessions)");
   lines.push("");
   lines.push(BOLD + "  Other:" + RESET);
   lines.push("    /, F3            Filter sessions by text");
@@ -5013,76 +5044,57 @@ function renderInactivityModal(state, width) {
 
 function renderListTabBar(state, width) {
   const bc = C.border;
-  const activeTab = state.listTab;
-  const hoverTab = state.hoverListTab;
 
-  // Per-tab counts
-  const summaryCount = state.sessions.length;
+  const totalCount = state.sessions.length;
   const liveCount = state.sessions.filter((s) => !!s.process).length;
-  const counts = [summaryCount, liveCount];
+  const isLive = state.listTab === 1;
 
-  // Build tab labels with counts: "Summary (42)  Live (3)"
-  const tabLabels = LIST_TABS.map((name, i) => `${name} (${counts[i]})`);
+  // Title: "Sessions (42)" or "Live Sessions (3/42)"
+  const title = isLive
+    ? `Sessions (${liveCount}/${totalCount})`
+    : `Sessions (${totalCount})`;
+  const titleEnd = 3 + title.length; // after "╭─ <title>"
 
-  // Tab positions for click detection
-  const tabParts = [];
-  let col = 3; // after "╭─ "
-  for (let i = 0; i < tabLabels.length; i++) {
-    if (i > 0) col += 2;
-    tabParts.push({ col, len: tabLabels[i].length, idx: i });
-    col += tabLabels[i].length;
-  }
-  const labelsEnd = col;
+  // Live button — placed after some gap
+  const liveLabel = isLive ? "[Live ●]" : "[Live ○]";
+  const liveStart = titleEnd + 2;
+  const liveEnd = liveStart + liveLabel.length;
+  state._liveBtn = { col: liveStart + 3, len: liveLabel.length }; // 1-based col for click detection (+3 for ╭─ offset)
 
-  // Top border with tab labels
+  // Top border line
   let topLine = bc + BOX.tl + BOX.h + " " + RESET;
-  for (let i = 0; i < tabLabels.length; i++) {
-    if (i > 0) topLine += "  ";
-    const label = tabLabels[i];
-    if (i === activeTab) {
-      topLine += C.panelTitle + label + RESET;
-    } else if (i === hoverTab) {
-      topLine += "\x1b[4;38;5;179m" + label + RESET;
-    } else {
-      topLine += "\x1b[38;5;245m" + label + RESET;
-    }
+  topLine += C.panelTitle + title + RESET;
+  topLine += "  ";
+  if (isLive) {
+    topLine += "\x1b[1;38;5;114m" + liveLabel + RESET;
+  } else if (state._liveHover) {
+    topLine += "\x1b[4;38;5;179m" + liveLabel + RESET;
+  } else {
+    topLine += "\x1b[38;5;245m" + liveLabel + RESET;
   }
   topLine += " ";
-  const remaining = Math.max(0, width - labelsEnd - 2);
+  const remaining = Math.max(0, width - liveEnd - 2);
   topLine += bc + BOX.h.repeat(remaining) + BOX.tr + RESET;
 
-  // Underline rule (matches bottom panel style)
+  // Underline rule
   const dimRule = "\x1b[38;5;238m";
   let ruleLine = bc + BOX.v + RESET + dimRule + "──" + RESET;
-  for (let i = 0; i < tabLabels.length; i++) {
-    if (i > 0) ruleLine += dimRule + "──" + RESET;
-    const label = tabLabels[i];
-    if (i === activeTab) {
-      ruleLine += C.borderHi + "━".repeat(label.length) + RESET;
-    } else if (i === hoverTab) {
-      ruleLine += "\x1b[38;5;245m" + "━".repeat(label.length) + RESET;
-    } else {
-      ruleLine += dimRule + "─".repeat(label.length) + RESET;
-    }
-  }
+  ruleLine += C.borderHi + "━".repeat(title.length) + RESET;
+  ruleLine += dimRule + "──" + RESET;
+  ruleLine += dimRule + "─".repeat(liveLabel.length) + RESET;
   ruleLine += dimRule + "─" + RESET;
-  const ruleRemain = Math.max(0, width - labelsEnd - 2);
+  const ruleRemain = Math.max(0, width - liveEnd - 2);
   ruleLine += dimRule + "─".repeat(ruleRemain) + RESET + bc + BOX.v + RESET;
 
   return topLine + "\n" + ruleLine;
 }
 
-/** Given a 1-based column, return which list tab index was clicked, or -1. */
+/** Given a 1-based column, return 1 if the Live button was clicked, or -1. */
 function listTabAtX(col, state) {
-  const summaryCount = state ? state.sessions.length : 0;
-  const liveCount = state ? state.sessions.filter((s) => !!s.process).length : 0;
-  const counts = [summaryCount, liveCount];
-  let pos = 4; // skip ╭─ + space (1-based)
-  for (let i = 0; i < LIST_TABS.length; i++) {
-    if (i > 0) pos += 2;
-    const w = `${LIST_TABS[i]} (${counts[i]})`.length;
-    if (col >= pos && col < pos + w) return i;
-    pos += w;
+  const btn = state && state._liveBtn;
+  if (btn && col >= btn.col && col < btn.col + btn.len) {
+    // Toggle: return the opposite tab
+    return state.listTab === 1 ? 0 : 1;
   }
   return -1;
 }
@@ -6029,11 +6041,12 @@ function handleEvent(event, state) {
         const idx = tabAtX(event.col);
         if (idx >= 0) newHover = idx;
       }
-      // Track hover over list tab bar (top border or underline row)
+      // Track hover over Live button in list tab bar
       let newListHover = -1;
+      let newLiveHover = false;
       if (state._listTabBarRow && (event.row === state._listTabBarRow || event.row === state._listTabBarRow + 1)) {
         const idx = listTabAtX(event.col, state);
-        if (idx >= 0) newListHover = idx;
+        if (idx >= 0) { newListHover = idx; newLiveHover = true; }
       }
       // Track hover over config sub-tabs and scrollbar
       let newConfigHover = -1;
@@ -6092,13 +6105,14 @@ function handleEvent(event, state) {
         if (state._ageFilterXCol > 0 && event.col >= state._ageFilterXCol && event.col <= state._ageFilterXCol + 1)
           newAgeXHover = true;
       }
-      if (newHover !== state.hoverTab || newListHover !== state.hoverListTab ||
+      if (newHover !== state.hoverTab || newListHover !== state.hoverListTab || newLiveHover !== !!state._liveHover ||
           newConfigHover !== state.configSubTabHover || newScrollHover !== state._configScrollbarHover ||
           newAgentToolHover !== state.hoverAgentToolTab || newAgentArrowHover !== state._hoverAgentArrow ||
           newFilterXHover !== state._hoverFilterX || newAgeXHover !== state._hoverAgeX ||
           newColHover !== state._hoverColKey) {
         state.hoverTab = newHover;
         state.hoverListTab = newListHover;
+        state._liveHover = newLiveHover;
         state.configSubTabHover = newConfigHover;
         state._configScrollbarHover = newScrollHover;
         state.hoverAgentToolTab = newAgentToolHover;
@@ -6154,28 +6168,16 @@ function handleEvent(event, state) {
 
 /** Save current sort to per-tab state, switch to newTab, restore its sort. */
 function switchToListTab(state, newTab) {
-  // Save current sort for the tab we're leaving
-  state._tabSort[state.listTab] = { col: state.sortCol, asc: state.sortAsc };
   state.listTab = newTab;
   state.selectedRow = 0;
   state.scrollOffset = 0;
-  // Restore sort for the new tab
-  const saved = state._tabSort[state.listTab];
-  const cols = activeColumns(state);
-  if (saved && cols.find((c) => c.key === saved.col)) {
-    state.sortCol = saved.col;
-    state.sortAsc = saved.asc;
-  } else {
-    state.sortCol = "active";
-    state.sortAsc = true;
-  }
   applySortAndFilter(state);
   state.dirty = true;
   saveUiPrefs({ bottomTab: state.bottomTab, listTab: state.listTab, tabSort: state._tabSort });
 }
 
 function switchListTab(state) {
-  switchToListTab(state, (state.listTab + 1) % LIST_TABS.length);
+  switchToListTab(state, state.listTab === 0 ? 1 : 0);
 }
 
 function openSortBy(state) {
