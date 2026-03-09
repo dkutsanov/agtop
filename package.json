@@ -1,7 +1,7 @@
 {
   "name": "agtop",
   "version": "0.1.0",
-  "description": "Estimate the cost of local Codex and Claude Code sessions",
+  "description": "htop-like TUI for monitoring AI coding agent sessions (Claude Code, Codex)",
   "type": "module",
   "bin": {
     "agtop": "./index.js"
@@ -9,8 +9,26 @@
   "files": [
     "index.js"
   ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "ai",
+    "agent",
+    "tui",
+    "htop",
+    "cost",
+    "tokens",
+    "monitoring"
+  ],
   "engines": {
-    "node": ">=18.3.0"
+    "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ldegio/agtop.git"
+  },
+  "homepage": "https://github.com/ldegio/agtop",
+  "author": "Loris Degioanni",
   "license": "MIT"
 }
