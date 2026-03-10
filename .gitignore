@@ -5,3 +5,4 @@ index_.js
 *.swp
 *.swo
 .DS_Store
+package-lock.json
