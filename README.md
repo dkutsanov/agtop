@@ -1,5 +1,6 @@
 # agtop
 
+Run with:
 ```
 npx github:ldegio/agtop
 ```
@@ -7,8 +8,9 @@ npx github:ldegio/agtop
 Your window into what your AI coding agents are actually doing. agtop is a top-style terminal dashboard that tracks every Claude Code and Codex session on your machine — spend, token usage, context pressure, CPU load, tool invocations, and more — all in one place, live.
 
 ![agtop](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
+![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)
 
-![Session list with live CPU and cost metrics](screenshots/main-list.png)
+<img src="screenshots/main-list.png" width="700" alt="Session list with live CPU and cost metrics">
 
 ## Features
 
@@ -82,19 +84,19 @@ agtop -d 3
 
 **Info panel** — session identity, wall/API time, context pressure
 
-![Info panel](screenshots/panel-info.png)
+<img src="screenshots/panel-info.png" width="600" alt="Info panel">
 
 **Tool Activity** — per-tool invocation counts and live feed with timestamps
 
-![Tool Activity panel](screenshots/panel-tool-activity.png)
+<img src="screenshots/panel-tool-activity.png" width="600" alt="Tool Activity panel">
 
 **Cost breakdown** — total spend by time window, per-model token and cost split
 
-![Cost panel](screenshots/panel-cost.png)
+<img src="screenshots/panel-cost.png" width="600" alt="Cost panel">
 
 **Config** — browse CLAUDE.md, memories, skills, MCP servers, and permissions
 
-![Config panel](screenshots/panel-config.png)
+<img src="screenshots/panel-config.png" width="600" alt="Config panel">
 
 ## How It Works
 
