@@ -2482,7 +2482,7 @@ const COL_TOKENS = {
   compare: (a, b) => ((a.list_input_tokens || 0) + (a.list_output_tokens || 0)) - ((b.list_input_tokens || 0) + (b.list_output_tokens || 0)),
 };
 const COL_COST = {
-  key: "cost", label: "COST", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
+  key: "cost", label: "$", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
   render: (s) => compactUsd(s.list_total_cost),
   compare: (a, b) => {
     const ca = a.list_total_cost === "included" ? -1 : parseFloat(a.list_total_cost || 0);
