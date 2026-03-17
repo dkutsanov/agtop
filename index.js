@@ -2482,7 +2482,7 @@ const COL_TOKENS = {
   compare: (a, b) => ((a.list_input_tokens || 0) + (a.list_output_tokens || 0)) - ((b.list_input_tokens || 0) + (b.list_output_tokens || 0)),
 };
 const COL_COST = {
-  key: "cost", label: "COST", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
+  key: "cost", label: "$", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
   render: (s) => compactUsd(s.list_total_cost),
   compare: (a, b) => {
     const ca = a.list_total_cost === "included" ? -1 : parseFloat(a.list_total_cost || 0);
@@ -2628,6 +2628,18 @@ function readClaudeCredential() {
     const credPath = join(homedir(), ".claude", ".credentials.json");
     const cred = JSON.parse(readFileSync(credPath, "utf-8"));
     const tok = cred.accessToken || cred.access_token;
+    if (tok) {
+      if (tok.startsWith("sk-ant-")) return { type: "api_key" };
+      return { type: "oauth", token: tok };
+    }
+  } catch { /* no file */ }
+  // Fallback: ~/.claude.json (used by native Claude Code installs on Windows/Linux)
+  try {
+    const claudeJson = join(homedir(), ".claude.json");
+    const data = JSON.parse(readFileSync(claudeJson, "utf-8"));
+    const apiKey = data.primaryApiKey;
+    if (apiKey && apiKey.startsWith("sk-ant-")) return { type: "api_key" };
+    const tok = data.oauthAccount?.accessToken || data.oauthAccount?.access_token;
     if (tok) {
       if (tok.startsWith("sk-ant-")) return { type: "api_key" };
       return { type: "oauth", token: tok };
@@ -2880,7 +2892,7 @@ function psSnapshotWindows() {
   // Single PowerShell call: get all processes with ppid, cmdline, memory, cpu time.
   const script =
     "Get-CimInstance Win32_Process " +
-    "| Select-Object ProcessId,ParentProcessId,CommandLine,WorkingSetSize,KernelModeTime,UserModeTime " +
+    "| Select-Object ProcessId,ParentProcessId,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime " +
     "| ConvertTo-Json -Compress -Depth 1";
   return new Promise((resolve) => {
     const proc = spawn(
@@ -2910,9 +2922,14 @@ function psSnapshotWindows() {
             cpu = Math.min(100, (dtCpu * 0.0001 / dtMs / numCpus) * 100);
           }
           _winPrevCpu.set(pid, { cpuTime, ts: now });
+          // CreationDate is serialized as "/Date(ms)/" by ConvertTo-Json
+          const cdMatch = String(p.CreationDate || "").match(/Date\((\d+)\)/);
+          const createdAt = cdMatch ? parseInt(cdMatch[1], 10) : 0;
           procs.set(pid, {
             ppid: p.ParentProcessId || 0,
             args: p.CommandLine || "",
+            cwd: (p.WorkingDirectory || "").replace(/\\/g, "/"),
+            createdAt,
             memory: p.WorkingSetSize || 0,
             cpu,
           });
@@ -2939,18 +2956,22 @@ async function collectProcessMetricsWindows(sessions) {
   }
 
   // Identify Claude/Codex root processes and map to session UUID via --resume arg.
-  // Fall back to cwd-based matching if no UUID in args.
+  // Fall back to cwd-based matching, then creation-time matching if no UUID in args.
   const rootPids = new Map(); // sessionKey → rootPid
 
-  // Build cwd→session lookup for fallback
+  // Build cwd→session lookup for fallback (normalize to lowercase forward-slashes)
   const cwdToSession = new Map();
   for (const s of sessions) {
     if (!s.label_source) continue;
-    const existing = cwdToSession.get(s.label_source);
+    const normalizedCwd = s.label_source.replace(/\\/g, "/").toLowerCase();
+    const existing = cwdToSession.get(normalizedCwd);
     if (!existing || (s.last_active && (!existing.last_active || s.last_active > existing.last_active))) {
-      cwdToSession.set(s.label_source, s);
+      cwdToSession.set(normalizedCwd, s);
     }
   }
+
+  // Collect no-resume processes for creation-time fallback
+  const noResume = []; // { pid, info, provider }
 
   for (const [pid, info] of snapshot) {
     const args = info.args || "";
@@ -2964,14 +2985,46 @@ async function collectProcessMetricsWindows(sessions) {
     if (resumeMatch) {
       rootPids.set(`${provider}:${resumeMatch[1]}`, pid);
     } else {
-      // On Windows, extract CWD from CommandLine heuristic or skip — no lsof available.
-      // Try matching by project path in the command line itself.
-      for (const [cwd, session] of cwdToSession) {
-        if (args.includes(cwd)) {
+      // Try CWD-based match first (WorkingDirectory from Win32_Process, when available).
+      const procCwd = info.cwd ? info.cwd.toLowerCase() : "";
+      if (procCwd) {
+        const session = cwdToSession.get(procCwd);
+        if (session) {
           const key = `${session.provider}:${session.session_id}`;
           if (!rootPids.has(key)) rootPids.set(key, pid);
-          break;
+          continue;
         }
+      }
+      // Queue for creation-time fallback (Win32_Process.WorkingDirectory is often null).
+      if (info.createdAt) noResume.push({ pid, info, provider });
+    }
+  }
+
+  // Creation-time fallback: match process start time against session started_at.
+  // The process starts a few seconds before the first JSONL entry is written,
+  // so we look for the session whose started_at is closest and within 60s.
+  if (noResume.length > 0) {
+    const unmatched = sessions.filter((s) => {
+      const key = `${s.provider}:${s.session_id}`;
+      return !rootPids.has(key) && s.started_at;
+    });
+    for (const { pid, info, provider } of noResume) {
+      const procMs = info.createdAt;
+      let bestSession = null;
+      let bestDiff = Infinity;
+      for (const s of unmatched) {
+        if (s.provider !== provider) continue;
+        const sessionMs = new Date(s.started_at).getTime();
+        // Session is written after process starts; allow up to 60s gap.
+        const diff = sessionMs - procMs;
+        if (diff >= 0 && diff < 60_000 && diff < bestDiff) {
+          bestDiff = diff;
+          bestSession = s;
+        }
+      }
+      if (bestSession) {
+        const key = `${bestSession.provider}:${bestSession.session_id}`;
+        if (!rootPids.has(key)) rootPids.set(key, pid);
       }
     }
   }
