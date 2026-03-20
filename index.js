@@ -234,9 +234,9 @@ OPTIONS
 KEYBOARD SHORTCUTS (interactive mode)
   j/k, arrows            Navigate sessions
   Enter                  Open detail view
-  Tab                    Cycle bottom panel tabs (Info/Cost/System/Tool/Config)
+  Tab                    Cycle bottom panel tabs (Info/Cost/Performance/Tool/Config)
   \`                      Toggle Sessions/Live Sessions list view
-  1/2/3/4/5              Jump to Info/Cost/System/Tool Activity/Config panel
+  1/2/3/4/5              Jump to Info/Cost/Performance/Tool Activity/Config panel
   F3 or /                Filter sessions by text
   F6 or >                Sort-by panel
   F7                     Filter sessions by age (1d / 1w / 1mo)
@@ -3212,7 +3212,7 @@ function createState() {
     headerLines: 4, // number of header lines (boxTop + 2 content + boxBottom)
     _processMetrics: new Map(),
     _tier2Tick: TIER2_INTERVAL_TICKS - 1,
-    bottomTab: 0, // 0=Info, 1=Cost, 2=System, 3=Tool Activity, 4=Config
+    bottomTab: 0, // 0=Info, 1=Cost, 2=Performance, 3=Tool Activity, 4=Config
     hoverTab: -1, // tab index being hovered, -1 = none
     listTab: 0, // 0=Sessions, 1=Live Sessions
     hoverListTab: -1, // list tab hover, -1 = none
@@ -3973,7 +3973,7 @@ const MAX_PANEL = 30;
  * Build content lines for each of the three bottom panels, then merge
  * them side-by-side with box borders into composite screen lines.
  */
-const BOTTOM_TABS = ["Info", "System", "Tool Activity", "Cost", "Config"];
+const BOTTOM_TABS = ["Info", "Performance", "Tool Activity", "Cost", "Config"];
 
 function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, hoverTab, state) {
   const bc = C.border;
@@ -4393,7 +4393,7 @@ function renderSystemPanel(session, data, panelW, rows) {
   const pm = session.process;
 
   if (!pm) {
-    lines.push(C.dimText + "System data is only available for running sessions" + RESET);
+    lines.push(C.dimText + "Performance data is only available for running sessions" + RESET);
     while (lines.length < rows) lines.push("");
     return lines;
   }
@@ -4953,7 +4953,7 @@ function renderHelpView(width, height) {
   lines.push("");
   lines.push(BOLD + "  Tabs:" + RESET);
   lines.push("    Tab              Cycle bottom panel tabs");
-  lines.push("    1, 2, 3, 4, 5    Switch to Info/Cost/System/Tools/Config");
+  lines.push("    1, 2, 3, 4, 5    Switch to Info/Cost/Performance/Tools/Config");
   lines.push("    Shift+Tab / `    Toggle Live filter (show only running sessions)");
   lines.push("");
   lines.push(BOLD + "  Other:" + RESET);
