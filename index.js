@@ -781,9 +781,12 @@ function extractToolDetail(name, input) {
   else if (name === "TaskUpdate") s = input.task_id ? `#${input.task_id} ${input.status || ""}`.trim() : "";
   else if (name === "TaskGet" || name === "TaskStop" || name === "TaskOutput") s = input.task_id ? `#${input.task_id}` : "";
   else if (name === "TaskList") s = "(list)";
-  else if (typeof input === "object") {
+  else if (name === "write_stdin") {
+    const raw = input.input || input.stdin || "";
+    s = raw.split(/[\r\n]/)[0].slice(0, 200);
+  } else if (typeof input === "object") {
     for (const v of Object.values(input)) {
-      if (typeof v === "string" && v.length > 0) { s = v.slice(0, 120); break; }
+      if (typeof v === "string" && v.length > 0) { s = v.split(/[\r\n]/)[0].slice(0, 120); break; }
     }
   }
   return { short: s, full: s };
@@ -4743,7 +4746,7 @@ function renderAgentPanel(session, data, panelW, rows, state) {
       const rawDetail = typeof entry === "string" ? entry : (entry.d || "");
       const rawTs = typeof entry === "string" ? "" : (entry.ts || "");
 
-      let display = rawDetail;
+      let display = rawDetail.replace(/[\r\n\t]/g, " ").trimEnd();
       if (HOME && display.startsWith(HOME)) display = "~" + display.slice(HOME.length);
 
       // Compact timestamp: "14:32" (today) or "Mar 5 14:32" (older)
