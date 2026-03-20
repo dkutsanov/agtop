@@ -5371,7 +5371,7 @@ function render(state) {
 
   // Overlay delete confirmation
   if (state.mode === "delete") {
-    const sel = state.sessions[state.selectedRow];
+    const sel = state.filtered[state.selectedRow];
     if (sel) {
       const dm = renderDeleteConfirm(sel, width);
       const startRow = Math.max(0, Math.floor((screenLines.length - dm.lines.length) / 2));
