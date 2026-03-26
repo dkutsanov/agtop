@@ -2709,7 +2709,11 @@ const COL_TOOLS_RATE = {
 };
 const COL_MODEL = {
   key: "model", label: "MODEL", width: 14, align: "left", desc: "AI model used by the session",
-  render: (s) => (s.model || "").replace(/^claude-/, "").replace(/^gpt-/, ""),
+  render: (s) => {
+    let m = (s.model || "").replace(/^claude-/, "").replace(/^gpt-/, "");
+    if (s.list_context && s.list_context.max === 1_048_576) m += "[1M]";
+    return m;
+  },
   compare: (a, b) => (a.model || "").localeCompare(b.model || ""),
 };
 const COL_IN_TOKENS = {
@@ -4330,7 +4334,8 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
   }
 
   // ── Identity ──
-  const displayModel = data.lastModel || session.model || (data.models || [data.model])[0] || "?";
+  let displayModel = data.lastModel || session.model || (data.models || [data.model])[0] || "?";
+  if (session.list_context && session.list_context.max === 1_048_576) displayModel += "[1M]";
   const provColor = session.provider === "claude" ? C.modelClaude : C.modelOpenAI;
   const ml = displayModel.toLowerCase();
   const mdlColor = ml.startsWith("claude") ? C.modelClaude
