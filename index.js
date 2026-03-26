@@ -2654,7 +2654,7 @@ const COL_LAST = {
   compare: (a, b) => (b.last_active || "").localeCompare(a.last_active || ""),
 };
 const COL_DURATION = {
-  key: "duration", label: "DUR", width: 6, align: "right",
+  key: "duration", label: "DURATION", width: 8, align: "right",
   desc: "Session duration (first to last activity)",
   render: (s) => sessionDuration(s),
   compare: (a, b) => {
@@ -2669,7 +2669,7 @@ const COL_TOKENS = {
   compare: (a, b) => ((a.list_input_tokens || 0) + (a.list_output_tokens || 0)) - ((b.list_input_tokens || 0) + (b.list_output_tokens || 0)),
 };
 const COL_COST = {
-  key: "cost", label: "$", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
+  key: "cost", label: "COST", width: 9, align: "right", desc: "Estimated cost based on per-token API pricing (LiteLLM).\nMany plans (Max, Pro, Team) are flat-rate or bundled,\nso actual billing may differ significantly.",
   render: (s) => compactUsd(s.list_total_cost),
   compare: (a, b) => {
     const ca = a.list_total_cost === "included" ? -1 : parseFloat(a.list_total_cost || 0);
@@ -2693,7 +2693,7 @@ const COL_COST_RATE = {
   compare: (a, b) => (a.list_cost_per_min || 0) - (b.list_cost_per_min || 0),
 };
 const COL_CPU = {
-  key: "cpu", label: "CPU%", width: 5, align: "right", desc: "CPU usage of session processes",
+  key: "cpu", label: "%CPU", width: 5, align: "right", desc: "CPU usage of session processes",
   render: (s) => s.process ? `${s.process.cpu}` : C.rule + "─" + RESET,
   compare: (a, b) => ((a.process && a.process.cpu) || 0) - ((b.process && b.process.cpu) || 0),
 };
@@ -2738,13 +2738,13 @@ const COMPACT_THRESHOLD = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   ? parseInt(process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, 10) / 100
   : 0.835; // Claude compacts at ~83.5% of context window
 const COL_CTX = {
-  key: "ctx", label: "CTX%", width: 6, align: "right", desc: "Context window usage (% until auto-compact)",
+  key: "ctx", label: "%CONTEXT", width: 8, align: "right", desc: "Context window usage (% until auto-compact)",
   render: (s) => {
     if (!s.list_context) return C.rule + "─" + RESET;
     if (s.list_context.compacting) return "COMPCT";
     const compactAt = s.list_context.max * COMPACT_THRESHOLD;
     const pct = Math.round((s.list_context.used / compactAt) * 100);
-    return pct + "%";
+    return String(pct);
   },
   compare: (a, b) => {
     // Compacting sessions sort to top
@@ -2773,7 +2773,7 @@ const COL_PROJECT = {
 };
 
 const SESSION_COLUMNS = [
-  COL_STATUS, COL_LAST, COL_DURATION, COL_COST, COL_COST_HOUR, COL_COST_TODAY, COL_CTX, COL_CPU, COL_TOOLS, COL_MODEL, COL_PROJECT,
+  COL_STATUS, COL_LAST, COL_DURATION, COL_COST, COL_CTX, COL_CPU, COL_TOOLS, COL_MODEL, COL_PROJECT,
 ];
 
 // Legacy aliases kept for non-interactive output and sort restore
@@ -3517,7 +3517,7 @@ function computeStats(sessions) {
   const hourKey   = localHourKey(new Date(nowMs));
   let spendToday = 0, spendWeek = 0, spendMonth = 0, spendHour = 0;
 
-  let totalCpu = 0, totalMemory = 0, totalTools = 0;
+  let totalCpu = 0, totalMemory = 0, totalTools = 0, runningCount = 0;
 
   for (const s of sessions) {
     if (s.provider === "claude") totalClaude++;
@@ -3539,6 +3539,7 @@ function computeStats(sessions) {
     totalTools += s.list_tool_count || 0;
 
     if (s.process) {
+      runningCount++;
       totalCpu += s.process.cpu || 0;
       totalMemory += s.process.memory || 0;
     }
@@ -3583,7 +3584,7 @@ function computeStats(sessions) {
 
   return {
     total: sessions.length,
-    totalClaude, totalCodex,
+    totalClaude, totalCodex, runningCount,
     active1h, active24h, active7d,
     totalInput, totalOutput,
     totalCpu: Math.round(totalCpu * 10) / 10,
@@ -3759,38 +3760,102 @@ function updateOverviewHistory(stats) {
 
 function renderHeader(stats, width, state) {
   const lines = [];
-  lines.push(boxTop(width, "Overview"));
-
   const curSpend = stats.spendTotal || 0;
   const curTokens = (stats.totalInput || 0) + (stats.totalOutput || 0);
-  const memMB = (stats.totalMemory || 0) / (1024 * 1024);
+  const memBytes = stats.totalMemory || 0;
+  const memGB = memBytes / (1024 * 1024 * 1024);
+  const memStr = memGB >= 1 ? `${memGB.toFixed(1)} GB` : `${(memBytes / (1024 * 1024)).toFixed(0)} MB`;
+  const quota = state && state._quota;
+  // Pad label to 13 visible chars so values align
+  const L = (lbl) => `${C.hdrLabel}${lbl}${RESET}${" ".repeat(Math.max(1, 13 - lbl.length))}`;
 
-  const inner = width - 4; // inside box borders
-  // Two columns: each has label + chart, separated by a gap
-  const gap = 2;
-  const colW = Math.floor((inner - gap) / 2);
-  const labelW = 22;
-  const chartW = Math.max(4, colW - labelW - 1);
+  // --- Left: metrics + limits ---
+  const infoLines = [];
+  infoLines.push(L("Agents CPU") + `${C.hdrValue}${stats.totalCpu}%${RESET}`);
+  infoLines.push(L("Agents Mem") + `${C.hdrValue}${memStr}${RESET}`);
+  infoLines.push(L("Total Spent") + `${C.hdrValue}$${curSpend.toFixed(2)}${RESET}`);
+  infoLines.push(L("Total Tokens") + `${C.hdrValue}${compactTokens(curTokens)}${RESET}`);
+  if (quota) {
+    infoLines.push(buildLimitsCell("Claude", quota.claude, quota.fetched));
+    infoLines.push(buildLimitsCell("Codex", quota.codex, quota.fetched));
+  }
 
-  // Row 1: Spend + CPU
-  const spendLabel = `${C.hdrLabel}Total Spend${RESET} ${C.hdrYellow}$${curSpend.toFixed(2)}${RESET}`;
-  const spendChart = renderBrailleSparkline(_globalSpendDeltaHist, chartW, 0, "spend");
-  const cpuLabel = `${C.hdrLabel}Agents CPU${RESET} ${C.hdrValue}${stats.totalCpu}%${RESET}`;
-  const cpuChart = renderBrailleSparkline(_globalCpuHist, chartW, 100, "cpu");
-  const row1Left = buildOverviewCell(spendLabel, spendChart, labelW, chartW, colW);
-  const row1Right = buildOverviewCell(cpuLabel, cpuChart, labelW, chartW, colW);
-  lines.push(boxLine(row1Left + " ".repeat(gap) + row1Right, width));
+  // --- Shortcuts: two columns with aligned labels ---
+  const k = (keys, label) => {
+    const keyStr = keys.split(",").map(s => `${C.accent}<${C.hdrValue}${s.trim()}${RESET}${C.accent}>${RESET}`).join(`${C.dimText}/${RESET}`);
+    const keyPlain = keys.split(",").map(s => `<${s.trim()}>`).join("/");
+    const pad = " ".repeat(Math.max(1, 10 - keyPlain.length));
+    return keyStr + pad + `${C.hdrDim}${label}${RESET}`;
+  };
+  const col1 = [
+    k("F1", "Help"),
+    k("F3, /", "Filter"),
+    k("F5, r", "Refresh"),
+    k("F6", "Sort By"),
+    k("F7", "Filter By Age"),
+  ];
+  const col2 = [
+    k("F10, q", "Quit"),
+    k("Tab", "Switch Panel"),
+    k("`", "Toggle Live"),
+    k("d", "Delete Session"),
+  ];
 
-  // Row 2: Tokens + Memory
-  const tokLabel = `${C.hdrLabel}Total Tokens${RESET} ${C.hdrValue}${compactTokens(curTokens)}${RESET}`;
-  const tokChart = renderBrailleSparkline(_globalTokenDeltaHist, chartW, 0, "spend");
-  const memLabel = `${C.hdrLabel}Agents Mem${RESET} ${C.hdrValue}${memMB.toFixed(0)} MB${RESET}`;
-  const row2Left = buildOverviewCell(tokLabel, tokChart, labelW, chartW, colW);
-  const row2Right = buildOverviewCell(memLabel, "", labelW, 0, colW);
-  lines.push(boxLine(row2Left + " ".repeat(gap) + row2Right, width));
+  // --- Assemble: info then gap then two shortcut columns ---
+  const rowCount = Math.max(infoLines.length, col1.length, col2.length);
+  const col1W = 26;
+  for (let r = 0; r < rowCount; r++) {
+    const left = r < infoLines.length ? infoLines[r] : "";
+    const sc1 = r < col1.length ? col1[r] : "";
+    const sc2 = r < col2.length ? col2[r] : "";
+    const leftPlain = left.replace(/\x1b\[[^m]*m/g, "");
+    const sc1Plain = sc1.replace(/\x1b\[[^m]*m/g, "");
+    const padLeft = Math.max(2, 50 - leftPlain.length);
+    const padMid = Math.max(1, col1W - sc1Plain.length);
+    lines.push(" " + left + " ".repeat(padLeft) + sc1 + " ".repeat(padMid) + sc2);
+  }
 
-  lines.push(boxBottom(width));
   return lines;
+}
+
+/** Build a single limits row for a provider */
+function buildLimitsCell(label, q, fetched) {
+  const pad = " ".repeat(Math.max(1, 13 - label.length));
+  if (!q) {
+    if (!fetched) return `${C.hdrLabel}${label}${RESET}${pad}${C.dimText}...${RESET}`;
+    return `${C.hdrLabel}${label}${RESET}${pad}${C.dimText}no credentials${RESET}`;
+  }
+  if (q.api_billing) return `${C.hdrLabel}${label}${RESET}${pad}${C.dimText}API billing, no limits${RESET}`;
+  const windows = [];
+  if (q.five_hour) windows.push({ label: "5h", pct: q.five_hour.pct, reset: q.five_hour.resets_at });
+  if (q.seven_day) windows.push({ label: "7d", pct: q.seven_day.pct, reset: q.seven_day.resets_at });
+  if (q.primary) windows.push({ label: "5h", pct: q.primary.pct, reset: q.primary.resets_at });
+  if (q.secondary) windows.push({ label: "7d", pct: q.secondary.pct, reset: q.secondary.resets_at });
+  if (windows.length === 0) return `${C.hdrLabel}${label}${RESET}${pad}${C.dimText}no limits${RESET}`;
+  const planStr = q.plan ? ` ${C.dimText}(${q.plan})${RESET}` : "";
+  let s = `${C.hdrLabel}${label}${RESET}${pad}${planStr}`;
+  for (const w of windows) {
+    const color = w.pct >= 90 ? C.costRed : w.pct >= 70 ? C.costYellow : C.chartBarLow;
+    const barW = 8;
+    const filled = Math.round((w.pct / 100) * barW);
+    let bar = "";
+    for (let b = 0; b < barW; b++) {
+      bar += (b < filled ? color + "━" : C.unfilled + "─") + RESET;
+    }
+    let resetStr = "";
+    if (w.reset) {
+      const resetMs = w.reset > 1e12 ? w.reset : w.reset * 1000;
+      const diffMs = resetMs - Date.now();
+      if (diffMs > 0) {
+        const h = Math.floor(diffMs / 3600_000);
+        const m = Math.floor((diffMs % 3600_000) / 60_000);
+        resetStr = ` ${C.dimText}${h}h${String(m).padStart(2, "0")}m${RESET}`;
+      }
+    }
+    s += ` ${C.hdrLabel}${w.label}${RESET} ${color}${String(w.pct).padStart(3)}%${RESET}${bar}${resetStr}`;
+  }
+  if (q.limit_reached) s += ` ${C.costRed}⚠ limit${RESET}`;
+  return s;
 }
 
 /** Render the Limits box below Overview showing account-wide quota for each provider */
@@ -3868,17 +3933,19 @@ function buildOverviewCell(label, chart, labelW, chartW, cellW) {
 // Render: column headers
 // ---------------------------------------------------------------------------
 
-function renderColumnHeaders(state, width) {
+function renderColumnHeaders(state, width, boxW) {
+  const bw = boxW || width;
+  const innerW = bw - 2; // inside │ borders
   const cols = activeColumns(state);
-  const totalW = columnsFullWidth(width, cols);
-  let line = C.colHdrBg + " ";
+  const totalW = columnsFullWidth(innerW, cols);
+  let line = C.panelTitle + " ";
   let used = 1;
 
   for (const col of cols) {
     const w = col.flex ? Math.max(8, totalW - used) : col.width;
     let label = col.label;
     if (col.key === state.sortCol) {
-      label += state.sortAsc ? "▲" : "▼";
+      label += state.sortAsc ? "↑" : "↓";
     }
     label = padOrClip(label, w, col.align);
     line += label;
@@ -3886,7 +3953,10 @@ function renderColumnHeaders(state, width) {
     if (!col.flex && used < totalW) { line += " "; used++; }
   }
 
-  return C.colHdrBg + ansiSlice(line, state.hScroll, width) + RESET;
+  const inner = ansiSlice(line, state.hScroll, innerW);
+  const visLen = ansiLen(inner);
+  const pad = Math.max(0, innerW - visLen);
+  return C.border + BOX.v + RESET + inner + " ".repeat(pad) + C.border + BOX.v + RESET;
 }
 
 /** Total width of all columns (flex column gets at least its content width). */
@@ -4022,20 +4092,9 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
 // ---------------------------------------------------------------------------
 
 function renderFooter(state, width) {
-  const items = [
-    ["F1", "Help", "f1"], ["F3", "Filter", "f3"], ["F5", "Refresh", "f5"],
-    ["F6", "SortBy", "f6"], ["F7", "Age", "f7"], ["Tab", "Panel", "tab"], ["`", "Live", "backtick"], ["d", "Delete", "d_delete"], ["F10", "Quit", "f10"],
-  ];
   let line = "";
   state._footerItems = [];
-  for (const [key, label, action] of items) {
-    const startCol = line.replace(/\x1b\[[^m]*m/g, "").length + 1; // 1-based
-    line += C.footerKey + key + RESET + C.footerLabel + label + " " + RESET;
-    const endCol = line.replace(/\x1b\[[^m]*m/g, "").length; // 1-based inclusive
-    state._footerItems.push({ start: startCol, end: endCol, action });
-  }
-  const toolbarLen = line.replace(/\x1b\[[^m]*m/g, "").length;
-  let remaining = width - toolbarLen;
+  let remaining = width;
 
   state._ageFilterXCol = -1;
   if (state.inactivityFilter) {
@@ -5330,7 +5389,7 @@ function renderProcessesPanel(session, panelW, rows, state) {
   });
 
   // Header row
-  const sortArrow = desc ? "▼" : "▲";
+  const sortArrow = desc ? "↓" : "↑";
   const hPid  = (sortKey === "pid"  ? C.hdrLabel + sortArrow : C.dimText + " ") + "PID".padStart(pidW - 1)  + RESET;
   const hCpu  = (sortKey === "cpu"  ? C.hdrLabel + sortArrow : C.dimText + " ") + "CPU%".padStart(cpuW - 1) + RESET;
   const hMem  = (sortKey === "mem"  ? C.hdrLabel + sortArrow : C.dimText + " ") + "MEM".padStart(memW - 1)  + RESET;
@@ -5441,7 +5500,7 @@ function renderSortBySidebar(state, width, height) {
     const isActive = col.key === state.sortCol;
     const isCursor = i === state.sortbyIdx;
     let label = col.label;
-    if (isActive) label += state.sortAsc ? " ▲" : " ▼";
+    if (isActive) label += state.sortAsc ? " ↑" : " ↓";
     label = padOrClip(label, sidebarW - 2, "left");
     if (isCursor) {
       items.push(C.selBg + " " + label + " " + RESET);
@@ -5556,22 +5615,22 @@ function renderListTabBar(state, width) {
   const liveCount = state.sessions.filter((s) => !!s.process).length;
   const isLive = state.listTab === 1;
 
-  // Title always uses the same format so nothing shifts when toggled
+  // Title with Live next to it
   const title = `Sessions (${isLive ? liveCount + "/" : ""}${totalCount})`;
+  const liveLabel = isLive ? " [Live ●]" : " [Live ○]";
+  const centerBlock = title + liveLabel;
+  const centerBlockLen = centerBlock.length;
 
-  // Live button fixed to the right, just before the closing ╮
-  const liveLabel = isLive ? "[Live ●]" : "[Live ○]";
-  // Button sits at fixed right position regardless of title length
-  // 1-based: width - ╮(1) - space(1) - label = width - liveLabel.length - 1
-  const liveBtnCol = width - liveLabel.length - 1;
+  // Live button position for mouse click detection
+  // Center the block: ╭(1) + leftFiller + space + title + liveLabel + space + rightFiller + ╮(1)
+  const innerW = width - 2; // minus ╭ and ╮
+  const leftFill = Math.max(1, Math.floor((innerW - centerBlockLen - 2) / 2));
+  const rightFill = Math.max(1, innerW - leftFill - centerBlockLen - 2);
+  const liveBtnCol = 1 + leftFill + 1 + title.length; // 1-based
   state._liveBtn = { col: liveBtnCol, len: liveLabel.length };
 
-  // Top border: ╭─ <title> ─────── [Live ○] ╮
-  // Fixed visible widths: ╭(1) ─(1) space(1) title space(1) ─*filler space(1) label space(1) ╮(1) = title+label+7
-  const fillerLen = Math.max(0, width - title.length - liveLabel.length - 7);
-  let topLine = bc + BOX.tl + BOX.h + " " + RESET;
-  topLine += C.hdrLabel + title + RESET + " ";
-  topLine += bc + BOX.h.repeat(fillerLen) + RESET + " ";
+  let topLine = bc + BOX.tl + BOX.h.repeat(leftFill) + " " + RESET;
+  topLine += C.hdrLabel + title + RESET;
   if (isLive) {
     topLine += "\x1b[1m" + C.green + liveLabel + RESET;
   } else if (state._liveHover) {
@@ -5579,7 +5638,7 @@ function renderListTabBar(state, width) {
   } else {
     topLine += C.dimText + liveLabel + RESET;
   }
-  topLine += " " + bc + BOX.tr + RESET;
+  topLine += " " + bc + BOX.h.repeat(rightFill) + BOX.tr + RESET;
 
   return topLine;
 }
@@ -5626,19 +5685,17 @@ function render(state) {
   // boxW = width - 1 to prevent terminal right-edge wrapping
   const boxW = width - 1;
 
-  // Overview panel (top)
+  // Overview panel (top, k9s-style borderless)
   const headerLines = renderHeader(state.stats || computeStats([]), boxW, state);
-  const limitsLines = renderLimitsPanel(boxW, state);
-  const limitsH = limitsLines.length;
 
   // Collect all screen lines
   const screenLines = [];
   for (const line of headerLines) screenLines.push(line);
   state.headerLines = headerLines.length; // update for mouse position calculations
 
-  // Bottom panels height (adaptive) — reserve space for limits panel at the bottom
+  // Bottom panels height (adaptive)
   const usedByHeader = headerLines.length;
-  const totalBody = height - usedByHeader - 1 - limitsH; // -1 footer, -limitsH for limits panel
+  const totalBody = height - usedByHeader - 1; // -1 footer
   const rawPanelH = Math.min(MAX_PANEL, Math.max(MIN_PANEL, Math.floor(totalBody * 0.4)));
   const panelHeight = Math.min(rawPanelH, Math.max(3, totalBody - 5)); // ensure list gets at least 5 rows
   const listAreaH = totalBody - panelHeight;
@@ -5659,21 +5716,28 @@ function render(state) {
   const tabBarLines = renderListTabBar(state, boxW).split("\n");
   for (const tbl of tabBarLines) screenLines.push(tbl);
   state._colHeaderRow = screenLines.length + 1; // 1-based row of column header
-  screenLines.push(renderColumnHeaders(state, width));
+  screenLines.push(renderColumnHeaders(state, width, boxW));
 
+  const innerW = boxW - 2; // inside │ borders
+  const wrapRow = (content) => {
+    const clipped = ansiSlice(content, 0, innerW);
+    const visLen = ansiLen(clipped);
+    const pad = Math.max(0, innerW - visLen);
+    return C.border + BOX.v + RESET + clipped + " ".repeat(pad) + C.border + BOX.v + RESET;
+  };
   if (list.length === 0 && state.listTab === 1) {
     // Empty Live tab
     const emptyMsg = C.dimText + "  No active sessions running" + RESET;
-    screenLines.push(emptyMsg);
-    for (let i = 1; i < listHeight; i++) screenLines.push("");
+    screenLines.push(wrapRow(emptyMsg));
+    for (let i = 1; i < listHeight; i++) screenLines.push(wrapRow(""));
   } else {
     for (let i = 0; i < listHeight; i++) {
       const idx = state.scrollOffset + i;
       if (idx < list.length) {
         const isSelected = idx === state.selectedRow;
-        screenLines.push(renderSessionRow(list[idx], idx, isSelected, width, now, state.hScroll, state));
+        screenLines.push(wrapRow(renderSessionRow(list[idx], idx, isSelected, innerW, now, state.hScroll, state)));
       } else {
-        screenLines.push("");
+        screenLines.push(wrapRow(""));
       }
     }
   }
@@ -5686,9 +5750,6 @@ function render(state) {
   state._configPanelTop = screenLines.length + 3; // 1-based: tab bar + rule line → first content row
   const bottomLines = renderBottomPanels(selected, state.panelData, panelPlan, boxW, panelHeight, state.bottomTab, state.hoverTab, state);
   for (const pl of bottomLines) screenLines.push(pl);
-
-  // Limits panel (below bottom panels)
-  for (const line of limitsLines) screenLines.push(line);
 
   // Overlay sort-by sidebar if in sortby mode
   if (state.mode === "sortby") {
