@@ -2642,7 +2642,7 @@ const LIST_TABS = ["Sessions"]; // Single unified list
 
 // Shared column defs
 const COL_STATUS = {
-  key: "status", label: " ", width: 1, align: "left",
+  key: "status", label: "LIVE", width: 4, align: "left",
   desc: "Running status: ● running, ○ stopped",
   render: (s) => s.process ? "●" : "○",
   compare: (a, b) => (a.process ? 1 : 0) - (b.process ? 1 : 0),
@@ -3950,7 +3950,7 @@ function renderColumnHeaders(state, width, boxW) {
     label = padOrClip(label, w, col.align);
     line += label;
     used += w;
-    if (!col.flex && used < totalW) { line += " "; used++; }
+    if (!col.flex && used < totalW) { line += "    "; used += 4; }
   }
 
   const inner = ansiSlice(line, state.hScroll, innerW);
@@ -3964,7 +3964,7 @@ function columnsFullWidth(termWidth, cols) {
   cols = cols || SUMMARY_COLUMNS;
   let fixed = 0;
   for (const col of cols) {
-    if (!col.flex) fixed += col.width + 1; // +1 separator
+    if (!col.flex) fixed += col.width + 4; // +4 separator
   }
   return Math.max(termWidth, fixed + 40);
 }
@@ -4081,7 +4081,7 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
     }
 
     used += w;
-    if (!col.flex && used < totalW) { line += " "; used++; }
+    if (!col.flex && used < totalW) { line += "    "; used += 4; }
   }
 
   return base + ansiSlice(line, hScroll, width) + RESET;
