@@ -165,6 +165,7 @@ function parseCliArgs() {
   let json = false;
   let plan = "retail";
   let delay = 2;
+  let theme = null; // null = auto-detect, "light" or "dark"
   let help = false;
 
   const takeValue = (i, flag) => {
@@ -208,6 +209,20 @@ function parseCliArgs() {
         process.stderr.write("error: --delay must be a number >= 1 (seconds)\n");
         process.exit(1);
       }
+    } else if (arg === "--theme") {
+      const value = takeValue(i, arg);
+      if (value !== "light" && value !== "dark") {
+        process.stderr.write("error: --theme must be 'light' or 'dark'\n");
+        process.exit(1);
+      }
+      theme = value;
+      i++;
+    } else if (arg.startsWith("--theme=")) {
+      theme = arg.slice("--theme=".length);
+      if (theme !== "light" && theme !== "dark") {
+        process.stderr.write("error: --theme must be 'light' or 'dark'\n");
+        process.exit(1);
+      }
     } else {
       process.stderr.write(`error: unknown option '${arg}'\n`);
       process.exit(1);
@@ -229,6 +244,7 @@ OPTIONS
                            max       Claude Max (Claude usage = included)
                            included  All usage marked as included
   -d, --delay <secs>     Refresh interval in seconds (default: 2)
+  --theme <light|dark>   Color theme (default: auto-detect from terminal)
   -h, --help             Show this help
 
 KEYBOARD SHORTCUTS (interactive mode)
@@ -279,7 +295,54 @@ NOTES
     json,
     plan,
     delay,
+    theme,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Terminal theme detection (OSC 11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Query terminal background color via OSC 11 and determine light/dark theme.
+ * Returns "light" if luminance > 0.5, "dark" otherwise.
+ * Falls back to "dark" if the terminal doesn't respond within 100ms.
+ */
+async function detectTheme() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return "dark";
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve("dark");
+    }, 100);
+    const wasRaw = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    let buf = "";
+    const onData = (data) => {
+      buf += data.toString();
+      // Response: \x1b]11;rgb:RRRR/GGGG/BBBB\x1b\\ or \x07
+      const match = buf.match(/\x1b\]11;rgb:([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)/);
+      if (match) {
+        cleanup();
+        // Terminal returns 16-bit per channel (0000-ffff)
+        const r = parseInt(match[1], 16) / (match[1].length <= 2 ? 255 : 65535);
+        const g = parseInt(match[2], 16) / (match[2].length <= 2 ? 255 : 65535);
+        const b = parseInt(match[3], 16) / (match[3].length <= 2 ? 255 : 65535);
+        // Relative luminance (sRGB)
+        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        resolve(luminance > 0.5 ? "light" : "dark");
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      process.stdin.removeListener("data", onData);
+      process.stdin.setRawMode(wasRaw);
+      process.stdin.pause();
+    };
+    process.stdin.on("data", onData);
+    process.stdout.write("\x1b]11;?\x07");
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -870,7 +933,7 @@ function wrapLine(text, maxW) {
 
 /** Helper: format a "not found" line for a config file. */
 function notFoundLine(text) {
-  return `\x1b[38;5;238m${text}\x1b[0m`;
+  return `${C.rule}${text}${RESET}`;
 }
 
 /** Sanitize a line for terminal display: replace tabs, strip \r and other control chars. */
@@ -883,11 +946,11 @@ function formatConfigFile(filePath, displayPath, maxLines) {
   const content = safeReadFile(filePath);
   if (!content) return null;
   const lines = [];
-  lines.push(`\x1b[1;38;5;75m${displayPath}\x1b[0m`);
+  lines.push(`${C.hdrLabel}${displayPath}${RESET}`);
   const srcLines = content.split("\n");
   const limit = maxLines || 50;
   for (const l of srcLines.slice(0, limit)) lines.push("  " + sanitizeLine(l));
-  if (srcLines.length > limit) lines.push("  \x1b[38;5;245m... (truncated)\x1b[0m");
+  if (srcLines.length > limit) lines.push(`  ${C.dimText}... (truncated)${RESET}`);
   lines.push("");
   return lines;
 }
@@ -954,9 +1017,9 @@ function extractClaudeConfig(session) {
         const descMatch = skillMd.match(/description:\s*(.+)/i);
         const name = nameMatch ? nameMatch[1].trim() : d;
         const desc = descMatch ? descMatch[1].trim() : "";
-        skillLines.push(`\x1b[38;5;114m${name}\x1b[0m` + (desc ? `  \x1b[38;5;245m${desc}\x1b[0m` : ""));
+        skillLines.push(`${C.green}${name}${RESET}` + (desc ? `  ${C.dimText}${desc}${RESET}` : ""));
       } else {
-        skillLines.push(`\x1b[38;5;114m${d}\x1b[0m`);
+        skillLines.push(`${C.green}${d}${RESET}`);
       }
     }
   }
@@ -972,7 +1035,7 @@ function extractClaudeConfig(session) {
       const settings = JSON.parse(settingsContent);
       if (settings.mcpServers) {
         for (const [name, cfg] of Object.entries(settings.mcpServers)) {
-          mcpLines.push(`\x1b[38;5;180m${name}\x1b[0m  \x1b[38;5;245m(global)\x1b[0m`);
+          mcpLines.push(`${C.amber}${name}${RESET}  ${C.dimText}(global)${RESET}`);
           if (cfg.command) mcpLines.push(`  command: ${cfg.command}`);
         }
       }
@@ -989,7 +1052,7 @@ function extractClaudeConfig(session) {
         const servers = mcp.mcpServers || mcp;
         for (const [name, cfg] of Object.entries(servers)) {
           if (typeof cfg !== "object") continue;
-          mcpLines.push(`\x1b[38;5;180m${name}\x1b[0m  \x1b[38;5;245m(project)\x1b[0m`);
+          mcpLines.push(`${C.amber}${name}${RESET}  ${C.dimText}(project)${RESET}`);
           if (cfg.command) mcpLines.push(`  command: ${cfg.command}`);
         }
       } catch {}
@@ -1015,14 +1078,14 @@ function extractClaudeConfig(session) {
       const perms = ps.permissions;
       if (!perms) continue;
       if (perms.allow && perms.allow.length)
-        permLines.push(`\x1b[38;5;114mallow\x1b[0m \x1b[38;5;245m(${pf.label})\x1b[0m: ${perms.allow.join(", ")}`);
+        permLines.push(`${C.green}allow${RESET} ${C.dimText}(${pf.label})${RESET}: ${perms.allow.join(", ")}`);
       if (perms.deny && perms.deny.length)
-        permLines.push(`\x1b[38;5;167mdenied\x1b[0m \x1b[38;5;245m(${pf.label})\x1b[0m: ${perms.deny.join(", ")}`);
+        permLines.push(`${C.closeBtn}denied${RESET} ${C.dimText}(${pf.label})${RESET}: ${perms.deny.join(", ")}`);
       if (perms.ask && perms.ask.length)
-        permLines.push(`\x1b[38;5;180mask\x1b[0m \x1b[38;5;245m(${pf.label})\x1b[0m: ${perms.ask.join(", ")}`);
+        permLines.push(`${C.amber}ask${RESET} ${C.dimText}(${pf.label})${RESET}: ${perms.ask.join(", ")}`);
     } catch {}
   }
-  if (permLines.length === 0) permLines.push(`\x1b[38;5;238mNo permission rules configured\x1b[0m`);
+  if (permLines.length === 0) permLines.push(`${C.rule}No permission rules configured${RESET}`);
   sections.push({ label: "Permissions", lines: permLines, copyPath: settingsPath });
 
   return sections;
@@ -1076,9 +1139,9 @@ function extractCodexConfig(session) {
         const descMatch = skillMd.match(/description:\s*(.+)/i);
         const name = nameMatch ? nameMatch[1].trim() : d;
         const desc = descMatch ? descMatch[1].trim() : "";
-        skillLines.push(`\x1b[38;5;114m${name}\x1b[0m` + (desc ? `  \x1b[38;5;245m${desc}\x1b[0m` : ""));
+        skillLines.push(`${C.green}${name}${RESET}` + (desc ? `  ${C.dimText}${desc}${RESET}` : ""));
       } else {
-        skillLines.push(`\x1b[38;5;114m${d}\x1b[0m`);
+        skillLines.push(`${C.green}${d}${RESET}`);
       }
     }
   }
@@ -1091,7 +1154,7 @@ function extractCodexConfig(session) {
     const mcpRe = /^\[mcp_servers\.([^\]]+)\]/gm;
     let m;
     while ((m = mcpRe.exec(globalToml)) !== null) {
-      mcpLines.push(`\x1b[38;5;180m${m[1]}\x1b[0m`);
+      mcpLines.push(`${C.amber}${m[1]}${RESET}`);
     }
   }
   if (mcpLines.length === 0) mcpLines.push(notFoundLine("No MCP servers in config.toml"));
@@ -2114,8 +2177,14 @@ const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 
-// btop-style color palette — dark bg, vibrant accents, rounded box borders
-const C = {
+// ---------------------------------------------------------------------------
+// Theme palettes
+// ---------------------------------------------------------------------------
+
+let currentTheme = "dark";
+
+// btop-style color palette — dark bg, vibrant accents
+const DARK = {
   // Panel borders and titles
   border: "\x1b[38;5;60m",      // muted blue-gray for box borders
   borderHi: "\x1b[38;5;75m",    // brighter blue for active panel border / tab underlines
@@ -2153,7 +2222,98 @@ const C = {
   normalFg: "\x1b[37m",        // white
   searchFg: "\x1b[1;36m",      // bold cyan
   accent: "\x1b[38;5;75m",     // accent blue
+  // Extended palette (used by inline colors throughout the TUI)
+  brightFg: "\x1b[1;38;5;255m",  // bright emphasis text
+  softFg: "\x1b[38;5;250m",      // soft emphasis (hover states)
+  rule: "\x1b[38;5;238m",        // divider lines and dim rules
+  green: "\x1b[38;5;114m",       // generic green (success, additions)
+  red: "\x1b[38;5;203m",         // generic red (errors, removals)
+  amber: "\x1b[38;5;180m",       // muted amber (MCP names, misc)
+  modelClaude: "\x1b[38;5;173m", // muted orange for Claude models
+  modelOpenAI: "\x1b[38;5;110m", // muted blue for OpenAI models
+  closeBtn: "\x1b[38;5;167m",    // close/X button
+  unfilled: "\x1b[38;5;244m",    // unfilled progress bar
+  sparkDim: "\x1b[38;5;22m",     // near-zero sparkline (CPU/spend)
+  sparkDimAccent: "\x1b[38;5;236m", // near-zero sparkline (accent)
+  sparkEmpty: "\x1b[38;5;238m",  // empty sparkline dots
+  chartEmpty: "\x1b[38;5;236m",  // empty chart grid dots
+  dimLabel: "\x1b[38;5;239m",    // dim axis label
+  dimAxis: "\x1b[38;5;238m",     // dim axis line
+  compactDim: "\x1b[38;5;52m",   // compaction warning (dim)
+  toolColors: [75, 114, 173, 180, 139, 109, 146, 215, 152, 167],
 };
+
+// Catppuccin Latte color palette — light bg, saturated accents
+const LIGHT = {
+  // Panel borders and titles
+  border: "\x1b[38;5;249m",        // Overlay0 — subtle gray border
+  borderHi: "\x1b[38;5;33m",       // Blue #1e66f5
+  panelTitle: "\x1b[1;38;5;208m",  // bold Peach #fe640b
+  // Labels and values
+  hdrLabel: "\x1b[1;38;5;33m",     // bold Blue
+  hdrValue: "\x1b[1;38;5;59m",     // bold Text #4c4f69
+  hdrCyan: "\x1b[1;38;5;30m",      // bold Teal #179299
+  hdrGreen: "\x1b[1;38;5;34m",     // bold Green #40a02b
+  hdrYellow: "\x1b[1;38;5;136m",   // bold Yellow #df8e1d
+  hdrDim: "\x1b[38;5;60m",         // Subtext0 blue-gray
+  // Column headers: dark text on light gray bg
+  colHdrBg: "\x1b[1;38;5;59;48;5;252m",
+  // Selected row: Surface0 highlight
+  selBg: "\x1b[48;5;252m",         // Surface0 #ccd0da
+  selFg: "\x1b[1;38;5;59m",        // bold Text
+  // Footer
+  footerKey: "\x1b[1;37;48;5;33m", // white on Blue
+  footerLabel: "\x1b[38;5;60m",    // Subtext0
+  footerBg: "",                     // transparent (terminal default)
+  // Provider colors
+  provClaude: "\x1b[38;5;92m",     // Mauve #8839ef
+  provCodex: "\x1b[38;5;34m",      // Green #40a02b
+  // Cost colors
+  costGreen: "\x1b[38;5;34m",      // Green
+  costYellow: "\x1b[38;5;136m",    // Yellow
+  costRed: "\x1b[1;38;5;160m",     // bold Red #d20f39
+  // Chart colors
+  chartBar: "\x1b[38;5;33m",       // Blue
+  chartBarHi: "\x1b[38;5;160m",    // Red
+  chartBarMed: "\x1b[38;5;136m",   // Yellow
+  chartBarLow: "\x1b[38;5;34m",    // Green
+  // Misc
+  dimText: "\x1b[38;5;60m",        // Subtext0 blue-gray
+  normalFg: "\x1b[38;5;59m",       // Text #4c4f69
+  searchFg: "\x1b[1;38;5;30m",     // bold Teal
+  accent: "\x1b[38;5;33m",         // Blue
+  // Extended palette
+  brightFg: "\x1b[1;38;5;238m",    // bold dark (emphasis on light bg)
+  softFg: "\x1b[38;5;243m",        // medium gray (hover states)
+  rule: "\x1b[38;5;249m",          // light gray dividers
+  green: "\x1b[38;5;34m",          // Green #40a02b
+  red: "\x1b[38;5;160m",           // Red #d20f39
+  amber: "\x1b[38;5;136m",         // Yellow #df8e1d
+  modelClaude: "\x1b[38;5;92m",    // Mauve
+  modelOpenAI: "\x1b[38;5;38m",    // Sapphire #209fb5
+  closeBtn: "\x1b[38;5;160m",      // Red
+  unfilled: "\x1b[38;5;249m",      // light gray
+  sparkDim: "\x1b[38;5;251m",      // light gray (near-zero CPU/spend)
+  sparkDimAccent: "\x1b[38;5;253m", // very light gray (near-zero accent)
+  sparkEmpty: "\x1b[38;5;251m",    // light gray empty dots
+  chartEmpty: "\x1b[38;5;253m",    // very light gray empty chart
+  dimLabel: "\x1b[38;5;247m",      // gray axis label
+  dimAxis: "\x1b[38;5;249m",       // gray axis line
+  compactDim: "\x1b[38;5;181m",    // light pink (compaction dim)
+  toolColors: [33, 34, 130, 136, 92, 30, 71, 166, 66, 160],
+};
+
+/** Apply the chosen theme. Called once at startup. */
+function applyTheme(theme) {
+  currentTheme = theme;
+  C = theme === "light" ? LIGHT : DARK;
+  sparkColor = theme === "light" ? sparkColorLight : sparkColorDark;
+  sparkColorAccent = theme === "light" ? sparkColorAccentLight : sparkColorAccentDark;
+  sparkColorSpend = theme === "light" ? sparkColorSpendLight : sparkColorSpendDark;
+}
+
+// Active palette — starts as DARK, reassigned by applyTheme()
+let C = DARK;
 
 // ---------------------------------------------------------------------------
 // Box-drawing helpers (btop-style rounded corners)
@@ -2218,8 +2378,8 @@ function pushHistory(map, key, value) {
   if (arr.length > HISTORY_MAX) arr.shift();
 }
 
-// btop-style smooth gradient: green(114) → teal(79) → yellow(221) → red(203)
-function sparkColor(ratio) {
+// --- Dark gradient functions ---
+function sparkColorDark(ratio) {
   if (ratio <= 0.01) return "\x1b[38;5;22m";  // near-zero: dark forest green
   if (ratio <= 0.30) return "\x1b[38;5;71m";  // low: muted green
   if (ratio <= 0.50) return "\x1b[38;5;114m"; // medium-low: green
@@ -2227,18 +2387,14 @@ function sparkColor(ratio) {
   if (ratio <= 0.85) return "\x1b[38;5;221m"; // medium-high: yellow
   return "\x1b[38;5;203m";                     // high: red
 }
-
-// Accent-only gradient (blue/cyan tones, no red) for non-CPU metrics
-function sparkColorAccent(ratio) {
+function sparkColorAccentDark(ratio) {
   if (ratio <= 0.01) return "\x1b[38;5;238m"; // near-zero: dark gray
   if (ratio <= 0.25) return "\x1b[38;5;60m";  // low: muted blue
   if (ratio <= 0.50) return "\x1b[38;5;68m";  // medium-low: steel blue
   if (ratio <= 0.75) return "\x1b[38;5;75m";  // medium: bright blue
   return "\x1b[38;5;117m";                     // high: cyan
 }
-
-// Green-to-red gradient for spend/token metrics
-function sparkColorSpend(ratio) {
+function sparkColorSpendDark(ratio) {
   if (ratio <= 0.01) return "\x1b[38;5;22m";  // near-zero: dark forest green
   if (ratio <= 0.25) return "\x1b[38;5;71m";  // low: muted green
   if (ratio <= 0.50) return "\x1b[38;5;114m"; // medium: green
@@ -2246,6 +2402,36 @@ function sparkColorSpend(ratio) {
   if (ratio <= 0.85) return "\x1b[38;5;221m"; // high: yellow
   return "\x1b[38;5;203m";                     // very high: red
 }
+
+// --- Light gradient functions (Catppuccin Latte) ---
+function sparkColorLight(ratio) {
+  if (ratio <= 0.01) return "\x1b[38;5;251m"; // near-zero: light gray
+  if (ratio <= 0.30) return "\x1b[38;5;35m";  // low: dark green
+  if (ratio <= 0.50) return "\x1b[38;5;34m";  // medium-low: green
+  if (ratio <= 0.70) return "\x1b[38;5;136m"; // medium: yellow
+  if (ratio <= 0.85) return "\x1b[38;5;208m"; // medium-high: peach
+  return "\x1b[38;5;160m";                     // high: red
+}
+function sparkColorAccentLight(ratio) {
+  if (ratio <= 0.01) return "\x1b[38;5;252m"; // near-zero: light gray
+  if (ratio <= 0.25) return "\x1b[38;5;110m"; // low: light blue
+  if (ratio <= 0.50) return "\x1b[38;5;68m";  // medium-low: steel blue
+  if (ratio <= 0.75) return "\x1b[38;5;33m";  // medium: blue
+  return "\x1b[38;5;30m";                      // high: teal
+}
+function sparkColorSpendLight(ratio) {
+  if (ratio <= 0.01) return "\x1b[38;5;251m"; // near-zero: light gray
+  if (ratio <= 0.25) return "\x1b[38;5;35m";  // low: dark green
+  if (ratio <= 0.50) return "\x1b[38;5;34m";  // medium: green
+  if (ratio <= 0.75) return "\x1b[38;5;136m"; // medium-high: yellow
+  if (ratio <= 0.85) return "\x1b[38;5;208m"; // high: peach
+  return "\x1b[38;5;160m";                     // very high: red
+}
+
+// Theme-switchable gradient function references
+let sparkColor = sparkColorDark;
+let sparkColorAccent = sparkColorAccentDark;
+let sparkColorSpend = sparkColorSpendDark;
 
 /**
  * Render a single-row braille sparkline (column chart style).
@@ -2260,7 +2446,7 @@ function renderBrailleSparkline(values, width, maxVal, colorMode) {
   // Left-column braille bits, bottom-to-top: bit3(0x40), bit2(0x04), bit1(0x02), bit0(0x01)
   const bits = [0x40, 0x04, 0x02, 0x01]; // row 3, 2, 1, 0
   const baseline = String.fromCharCode(0x2800 | 0x40); // bottom dot only
-  const dimBase = (colorMode === "spend" || colorMode === "cpu") ? "\x1b[38;5;22m" : "\x1b[38;5;236m";
+  const dimBase = (colorMode === "spend" || colorMode === "cpu") ? C.sparkDim : C.sparkDimAccent;
 
   if (!values.length) {
     return (dimBase + baseline + RESET).repeat(width);
@@ -2313,7 +2499,7 @@ function renderSparkline(values, width, maxVal, colorMode, style) {
   const minChar = chars[1]; // smallest visible dot
 
   if (!values.length) {
-    return ("\x1b[38;5;238m" + minChar + RESET).repeat(width);
+    return (C.sparkEmpty + minChar + RESET).repeat(width);
   }
   const start = Math.max(0, values.length - width);
   const visible = values.slice(start);
@@ -2340,13 +2526,13 @@ function renderSparkline(values, width, maxVal, colorMode, style) {
   // Leading empty area — minimum dots instead of blank spaces
   if (visible.length < width) {
     const fill = width - visible.length;
-    out += ("\x1b[38;5;238m" + minChar + RESET).repeat(fill);
+    out += (C.sparkEmpty + minChar + RESET).repeat(fill);
   }
 
   const span = hi - lo || 1;
   for (const v of visible) {
     if (v <= 0) {
-      out += "\x1b[38;5;238m" + minChar + RESET;
+      out += C.sparkEmpty + minChar + RESET;
       continue;
     }
     if (isFlat) {
@@ -2429,24 +2615,22 @@ function renderBrailleChart(values, totalWidth, chartRows, maxVal, colorMode, fo
     }
   }
 
-  const dimLabel = "\x1b[38;5;239m";
-  const dimAxis = "\x1b[38;5;238m";
   const lines = [];
 
   for (let r = 0; r < chartRows; r++) {
     const tickVal = Math.round(hi * (chartRows - r) / chartRows);
     const label = String(tickVal).padStart(maxLabelLen);
-    let line = dimLabel + label + dimAxis + " ┤" + RESET;
+    let line = C.dimLabel + label + C.dimAxis + " ┤" + RESET;
     for (let c = 0; c < chartCols; c++) {
       const bits = grid[r][c];
       const ch = String.fromCharCode(0x2800 + bits);
-      line += (bits ? colorFn(colRatio[c]) : "\x1b[38;5;236m") + ch + RESET;
+      line += (bits ? colorFn(colRatio[c]) : C.chartEmpty) + ch + RESET;
     }
     lines.push(line);
   }
 
   // Bottom axis with 0 label
-  lines.push(dimLabel + String(0).padStart(maxLabelLen) + dimAxis + " └" + "─".repeat(chartCols) + RESET);
+  lines.push(C.dimLabel + String(0).padStart(maxLabelLen) + C.dimAxis + " └" + "─".repeat(chartCols) + RESET);
   return lines;
 }
 
@@ -2510,7 +2694,7 @@ const COL_COST_RATE = {
 };
 const COL_CPU = {
   key: "cpu", label: "CPU%", width: 5, align: "right", desc: "CPU usage of session processes",
-  render: (s) => s.process ? `${s.process.cpu}` : "\x1b[38;5;238m─\x1b[0m",
+  render: (s) => s.process ? `${s.process.cpu}` : C.rule + "─" + RESET,
   compare: (a, b) => ((a.process && a.process.cpu) || 0) - ((b.process && b.process.cpu) || 0),
 };
 const COL_MEM = {
@@ -2552,7 +2736,7 @@ const COMPACT_THRESHOLD = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 const COL_CTX = {
   key: "ctx", label: "CTX%", width: 6, align: "right", desc: "Context window usage (% until auto-compact)",
   render: (s) => {
-    if (!s.list_context) return "\x1b[38;5;238m─\x1b[0m";
+    if (!s.list_context) return C.rule + "─" + RESET;
     if (s.list_context.compacting) return "COMPCT";
     const compactAt = s.list_context.max * COMPACT_THRESHOLD;
     const pct = Math.round((s.list_context.used / compactAt) * 100);
@@ -2570,12 +2754,12 @@ const COL_CTX = {
 };
 const COL_COST_HOUR = {
   key: "cost_hour", label: "$/1H", width: 7, align: "right", desc: "Cost in the last hour",
-  render: (s) => s.list_cost_hour > 0 ? compactUsd(s.list_cost_hour) : "\x1b[38;5;238m─\x1b[0m",
+  render: (s) => s.list_cost_hour > 0 ? compactUsd(s.list_cost_hour) : C.rule + "─" + RESET,
   compare: (a, b) => (a.list_cost_hour || 0) - (b.list_cost_hour || 0),
 };
 const COL_COST_TODAY = {
   key: "cost_today", label: "$/1D", width: 7, align: "right", desc: "Cost since midnight (local time)",
-  render: (s) => s.list_cost_today > 0 ? compactUsd(s.list_cost_today) : "\x1b[38;5;238m─\x1b[0m",
+  render: (s) => s.list_cost_today > 0 ? compactUsd(s.list_cost_today) : C.rule + "─" + RESET,
   compare: (a, b) => (a.list_cost_today || 0) - (b.list_cost_today || 0),
 };
 const COL_PROJECT = {
@@ -3638,7 +3822,7 @@ function renderLimitsPanel(width, state) {
       const filled = Math.round((w.pct / 100) * barW);
       let bar = "";
       for (let b = 0; b < barW; b++) {
-        bar += (b < filled ? color + "━" : "\x1b[38;5;244m─") + RESET;
+        bar += (b < filled ? color + "━" : C.unfilled + "─") + RESET;
       }
       let resetStr = "";
       if (w.reset) {
@@ -3715,27 +3899,36 @@ function columnsFullWidth(termWidth, cols) {
 // Render: session row
 // ---------------------------------------------------------------------------
 
-/** Compute age-based dim color for a session row (btop style).
- *  Continuous fade from 255 (bright white) to 238 (dim). */
+/** Compute age-based dim color for a session row.
+ *  Dark: fade from 255 (white) to 238 (dim gray).
+ *  Light: fade from 238 (dark) to 250 (light gray). */
 function ageDimColor(session, now) {
   const la = parseTimestamp(session.last_active);
+  if (currentTheme === "light") {
+    if (!la) return "\x1b[38;5;250m";
+    if (session.process) return "\x1b[1;38;5;238m"; // running: bold dark
+    const ageSec = Math.max(0, (now.getTime() - la.getTime()) / 1000);
+    const logAge = Math.log1p(ageSec / 3600);
+    const logMax = Math.log1p(720);
+    const ratio = Math.min(1, logAge / logMax);
+    const shade = Math.round(238 + ratio * 12); // 238 → 250
+    return `\x1b[38;5;${shade}m`;
+  }
   if (!la) return "\x1b[38;5;238m";
   if (session.process) return "\x1b[1;37m"; // running: bold white
   const ageSec = Math.max(0, (now.getTime() - la.getTime()) / 1000);
-  // Log scale so recent sessions get more contrast, old ones flatten out
-  // At 0s → 255, at 1h → ~251, at 1d → ~246, at 7d → ~240, at 30d → ~238
-  const logAge = Math.log1p(ageSec / 3600); // hours on log scale
-  const logMax = Math.log1p(720); // ~30 days in hours
+  const logAge = Math.log1p(ageSec / 3600);
+  const logMax = Math.log1p(720);
   const ratio = Math.min(1, logAge / logMax);
   const shade = Math.round(255 - ratio * 17); // 255 → 238
   return `\x1b[38;5;${shade}m`;
 }
 
-/** Model column color: muted orange for Anthropic, muted blue for OpenAI */
+/** Model column color */
 function modelColor(session) {
   const m = (session.model || "").toLowerCase();
-  if (m.startsWith("claude")) return "\x1b[38;5;173m"; // muted orange
-  if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")) return "\x1b[38;5;110m"; // muted blue
+  if (m.startsWith("claude")) return C.modelClaude;
+  if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")) return C.modelOpenAI;
   return C.dimText;
 }
 
@@ -3770,7 +3963,7 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
       const ctx = session.list_context;
       if (ctx && ctx.compacting) {
         const flash = Math.floor(Date.now() / 600) % 2 === 0;
-        colColor = flash ? "\x1b[1;31m" : "\x1b[38;5;52m";
+        colColor = flash ? "\x1b[1;31m" : C.compactDim;
       } else {
         const usedPct = ctx ? (ctx.used / (ctx.max * COMPACT_THRESHOLD)) * 100 : 0;
         colColor = usedPct > 85 ? C.costRed : usedPct > 65 ? C.costYellow : ctx ? C.chartBarLow : C.dimText;
@@ -3800,7 +3993,7 @@ function renderSessionRow(session, index, isSelected, width, now, hScroll, state
       state._colPrev[skey][col.key] = cur;
       const flashTs = (state._colFlash[skey] && state._colFlash[skey][col.key]) || 0;
       if (flashTs && (now - flashTs < 1500)) {
-        colColor = "\x1b[1;38;5;105m";
+        colColor = "\x1b[1m" + C.provClaude;
       } else if (col.key === "cost_hour" && session.list_cost_hour > 0) {
         colColor = costColor(session.list_cost_hour);
       } else if (col.key === "cost_today" && session.list_cost_today > 0) {
@@ -3845,9 +4038,9 @@ function renderFooter(state, width) {
     const label = { "1d": "1 day", "1w": "1 week", "1mo": "1 month" }[state.inactivityFilter] || state.inactivityFilter;
     const chunk = " Age: <" + label + " ✕ ";
     if (remaining >= chunk.length) {
-      line += "\x1b[1;38;5;179m" + " Age: <" + label + " " + RESET;
+      line += C.panelTitle + " Age: <" + label + " " + RESET;
       const beforeAgeX = line.replace(/\x1b\[[^m]*m/g, "").length;
-      const ageXStyle = state._hoverAgeX ? "\x1b[1;4;38;5;203m" : "\x1b[38;5;167m";
+      const ageXStyle = state._hoverAgeX ? "\x1b[1;4m" + C.red : C.closeBtn;
       line += ageXStyle + "✕" + RESET + " ";
       state._ageFilterXCol = beforeAgeX + 1;
       remaining -= chunk.length;
@@ -3860,7 +4053,7 @@ function renderFooter(state, width) {
     if (remaining >= chunk.length) {
       line += C.searchFg + " Filter: " + state.searchQuery + " " + RESET;
       const beforeX = line.replace(/\x1b\[[^m]*m/g, "").length;
-      const xStyle = state._hoverFilterX ? "\x1b[1;4;38;5;203m" : "\x1b[38;5;167m";
+      const xStyle = state._hoverFilterX ? "\x1b[1;4m" + C.red : C.closeBtn;
       line += xStyle + "✕" + RESET + " ";
       state._filterXCol = beforeX + 1;
       remaining -= chunk.length;
@@ -4044,9 +4237,9 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
     if (i === activeTab) {
       topLine += C.panelTitle + name + RESET;
     } else if (i === hoverTab) {
-      topLine += "\x1b[4;38;5;179m" + name + RESET; // underline amber on hover
+      topLine += "\x1b[4m" + C.panelTitle + name + RESET; // underline on hover
     } else {
-      topLine += "\x1b[38;5;245m" + name + RESET;
+      topLine += C.dimText + name + RESET;
     }
   }
   topLine += " ";
@@ -4054,7 +4247,7 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
   topLine += bc + BOX.h.repeat(remaining) + BOX.tr + RESET;
 
   // --- Underline rule: bright under active tab, dim elsewhere ---
-  const dimRule = "\x1b[38;5;238m";
+  const dimRule = C.rule;
   let ruleLine = bc + BOX.v + RESET + dimRule + "──" + RESET;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
     if (i > 0) ruleLine += dimRule + "──" + RESET;
@@ -4062,7 +4255,7 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
     if (i === activeTab) {
       ruleLine += C.borderHi + "━".repeat(name.length) + RESET;
     } else if (i === hoverTab) {
-      ruleLine += "\x1b[38;5;245m" + "━".repeat(name.length) + RESET; // subtle underline on hover
+      ruleLine += C.dimText + "━".repeat(name.length) + RESET; // subtle underline on hover
     } else {
       ruleLine += dimRule + "─".repeat(name.length) + RESET;
     }
@@ -4097,7 +4290,7 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
 function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, state) {
   const allLines = [];
   const w = panelW - 4; // inner content width
-  const dimRule = "\x1b[38;5;238m";
+  const dimRule = C.rule;
 
   if (!session) {
     allLines.push(C.dimText + "No session selected" + RESET);
@@ -4123,7 +4316,7 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
   // Helper: copy icon with flash
   function copyIcon(field) {
     const flash = session._copyFlash === field && session._copyFlashTs && (now - session._copyFlashTs < 1500);
-    return flash ? `\x1b[38;5;114m✓${RESET}` : `\x1b[38;5;60m⧉${RESET}`;
+    return flash ? `${C.green}✓${RESET}` : `${C.border}⧉${RESET}`;
   }
 
   // Helper: register a copyable line (icon near label)
@@ -4138,10 +4331,10 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
 
   // ── Identity ──
   const displayModel = data.lastModel || session.model || (data.models || [data.model])[0] || "?";
-  const provColor = session.provider === "claude" ? "\x1b[38;5;173m" : "\x1b[38;5;110m";
+  const provColor = session.provider === "claude" ? C.modelClaude : C.modelOpenAI;
   const ml = displayModel.toLowerCase();
-  const mdlColor = ml.startsWith("claude") ? "\x1b[38;5;173m"
-    : (ml.startsWith("gpt") || ml.startsWith("o1") || ml.startsWith("o3") || ml.startsWith("o4")) ? "\x1b[38;5;110m"
+  const mdlColor = ml.startsWith("claude") ? C.modelClaude
+    : (ml.startsWith("gpt") || ml.startsWith("o1") || ml.startsWith("o3") || ml.startsWith("o4")) ? C.modelOpenAI
     : C.hdrValue;
   lines.push(`${C.hdrLabel}Type${RESET}       ${provColor}${prov}${RESET}  ${C.hdrLabel}Model${RESET} ${mdlColor}${displayModel}${RESET}`);
   addCopyLine("ID", shortSid, sid, "id", 9);
@@ -4190,8 +4383,8 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
   // ── Lines added/removed (Claude only) ──
   if (session.provider === "claude" && (m.lines_added > 0 || m.lines_removed > 0)) {
     lines.push(dimRule + "─".repeat(Math.min(w, 40)) + RESET);
-    const addStr = m.lines_added > 0 ? `${C.hdrLabel}+${RESET}\x1b[38;5;114m${m.lines_added.toLocaleString()}${RESET}` : "";
-    const remStr = m.lines_removed > 0 ? `${C.hdrLabel}-${RESET}\x1b[38;5;203m${m.lines_removed.toLocaleString()}${RESET}` : "";
+    const addStr = m.lines_added > 0 ? `${C.hdrLabel}+${RESET}${C.green}${m.lines_added.toLocaleString()}${RESET}` : "";
+    const remStr = m.lines_removed > 0 ? `${C.hdrLabel}-${RESET}${C.red}${m.lines_removed.toLocaleString()}${RESET}` : "";
     const sep = m.lines_added > 0 && m.lines_removed > 0 ? `  ` : "";
     lines.push(`${C.hdrLabel}Lines${RESET}      ${addStr}${sep}${remStr}`);
   }
@@ -4203,7 +4396,7 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
 
     if (ctx.compacting) {
       const flash = Math.floor(Date.now() / 600) % 2 === 0;
-      const compactColor = flash ? "\x1b[1;31m" : "\x1b[38;5;52m";
+      const compactColor = flash ? "\x1b[1;31m" : C.compactDim;
       lines.push(`${C.hdrLabel}Compaction${RESET} ${compactColor}compacting...${RESET}`);
       const barW = Math.min(w - 2, 40);
       let bar = "";
@@ -4223,7 +4416,7 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
       const filled = Math.round(usedRatio * barW);
       let bar = "";
       for (let b = 0; b < barW; b++) {
-        bar += (b < filled ? pctColor + "━" : "\x1b[38;5;244m─") + RESET;
+        bar += (b < filled ? pctColor + "━" : C.unfilled + "─") + RESET;
       }
       lines.push(`           ${bar}`);
     }
@@ -4255,17 +4448,17 @@ function renderSessionInfoPanel(session, data, plan, panelW, rows, scrollTop, st
     const isThumb = r >= (state._infoScrollbar?.thumbStart || 0) && r < (state._infoScrollbar?.thumbEnd || 0);
     const padded = ansiSlice(line, 0, contentW);
     if (isThumb) {
-      const color = (state._infoScrollbarHover || state._infoScrollbarDrag) ? "\x1b[1;38;5;255m" : "\x1b[38;5;245m";
+      const color = (state._infoScrollbarHover || state._infoScrollbarDrag) ? C.brightFg : C.dimText;
       return padded + color + "┃" + RESET;
     }
-    return padded + "\x1b[38;5;238m│" + RESET;
+    return padded + C.rule + "│" + RESET;
   });
 }
 
 /** Cost panel: /cost-style breakdown — total, API duration, wall time, lines, per-model */
 function renderCostPanel(session, data, plan, panelW, rows, scrollTop, state) {
   const allLines = [];
-  const dimRule = "\x1b[38;5;238m";
+  const dimRule = C.rule;
 
   if (!session) {
     allLines.push(C.dimText + "No session selected" + RESET);
@@ -4385,7 +4578,7 @@ function renderCostPanel(session, data, plan, panelW, rows, scrollTop, state) {
     const plain = (line || "").replace(/\x1b\[[^m]*m/g, "");
     return (line || "") + " ".repeat(Math.max(0, w - plain.length));
   };
-  const divider = "\x1b[38;5;238m│\x1b[0m ";
+  const divider = C.rule + "│" + RESET + " ";
   for (let i = 0; i < totalL; i++) {
     allLines.push(padTo(leftLines[i] || "", sepCol) + divider + (rightLines[i] || ""));
   }
@@ -4418,10 +4611,10 @@ function renderCostPanel(session, data, plan, panelW, rows, scrollTop, state) {
     const isThumb = r >= thumbStart && r < thumbEnd;
     const padded = ansiSlice(line, 0, contentW);
     if (isThumb) {
-      const color = (state._costScrollbarHover || state._costScrollbarDrag) ? "\x1b[1;38;5;255m" : "\x1b[38;5;245m";
+      const color = (state._costScrollbarHover || state._costScrollbarDrag) ? C.brightFg : C.dimText;
       return padded + color + "┃" + RESET;
     }
-    return padded + "\x1b[38;5;238m│" + RESET;
+    return padded + C.rule + "│" + RESET;
   });
 }
 
@@ -4692,13 +4885,13 @@ function renderAgentPanel(session, data, panelW, rows, state) {
 
     if (isUpArrow) {
       const isHoverArrow = state._hoverAgentArrow === "up";
-      const arrowStyle = isHoverArrow ? "\x1b[1;38;5;255m" : C.dimText;
+      const arrowStyle = isHoverArrow ? C.brightFg : C.dimText;
       const arrow = arrowStyle + " ".repeat(Math.floor(AGENT_TAB_WIDTH / 2) - 1) + "▲" + RESET;
       line += arrow + " ".repeat(Math.max(0, AGENT_TAB_WIDTH - Math.floor(AGENT_TAB_WIDTH / 2)));
       state._agentUpArrowRow = r;
     } else if (isDownArrow) {
       const isHoverArrow = state._hoverAgentArrow === "down";
-      const arrowStyle = isHoverArrow ? "\x1b[1;38;5;255m" : C.dimText;
+      const arrowStyle = isHoverArrow ? C.brightFg : C.dimText;
       const arrow = arrowStyle + " ".repeat(Math.floor(AGENT_TAB_WIDTH / 2) - 1) + "▼" + RESET;
       line += arrow + " ".repeat(Math.max(0, AGENT_TAB_WIDTH - Math.floor(AGENT_TAB_WIDTH / 2)));
       state._agentDownArrowRow = r;
@@ -4721,16 +4914,16 @@ function renderAgentPanel(session, data, panelW, rows, state) {
       const pad = " ".repeat(Math.max(0, maxNameLen - trimName.length));
 
       // Count style: flash bright when count changes
-      const countStyle = isFlashing ? "\x1b[1;38;5;114m" : C.hdrDim;
+      const countStyle = isFlashing ? "\x1b[1m" + C.green : C.hdrDim;
 
       if (isActive) {
-        const nameStyle = hasRecentActivity ? "\x1b[1;38;5;114m" : "\x1b[1;38;5;255m";
+        const nameStyle = hasRecentActivity ? "\x1b[1m" + C.green : C.brightFg;
         line += " " + nameStyle + trimName + RESET + pad + " " + countStyle + countStr + RESET + " ";
       } else if (isHover) {
-        const nameStyle = hasRecentActivity ? "\x1b[4;38;5;114m" : "\x1b[4;38;5;250m";
+        const nameStyle = hasRecentActivity ? "\x1b[4m" + C.green : "\x1b[4m" + C.softFg;
         line += " " + nameStyle + trimName + RESET + pad + " " + countStyle + countStr + RESET + " ";
       } else {
-        const nameStyle = hasRecentActivity ? "\x1b[38;5;114m" : "\x1b[38;5;245m";
+        const nameStyle = hasRecentActivity ? C.green : C.dimText;
         line += " " + nameStyle + trimName + RESET + pad + " " + countStyle + countStr + RESET + " ";
       }
 
@@ -4745,7 +4938,7 @@ function renderAgentPanel(session, data, panelW, rows, state) {
     if (isActiveSep) {
       line += C.borderHi + "┃" + RESET;
     } else {
-      line += "\x1b[38;5;238m│" + RESET;
+      line += C.rule + "│" + RESET;
     }
 
     // --- Header row (first content row) ---
@@ -4754,8 +4947,8 @@ function renderAgentPanel(session, data, panelW, rows, state) {
       const btnInner = liveOn ? "● Live" : "○ Live";
       const btnInnerLen = btnInner.length;
       const btn = liveOn
-        ? "\x1b[1;38;5;114m[" + RESET + "\x1b[1;38;5;16;48;5;114m " + btnInner + " " + RESET + "\x1b[1;38;5;114m]" + RESET
-        : "\x1b[38;5;245m[ " + btnInner + " ]" + RESET;
+        ? "\x1b[1m" + C.green + "[" + RESET + "\x1b[1;38;5;16m" + (currentTheme === "light" ? "\x1b[48;5;34m" : "\x1b[48;5;114m") + " " + btnInner + " " + RESET + "\x1b[1m" + C.green + "]" + RESET
+        : C.dimText + "[ " + btnInner + " ]" + RESET;
       const btnLen = btnInnerLen + 4;
       const pad = Math.max(0, contentW - btnLen);
       line += " ".repeat(pad) + btn;
@@ -4792,7 +4985,7 @@ function renderAgentPanel(session, data, panelW, rows, state) {
 
       // Copy icon on the right
       const copyFlash = state._agentCopyFlash === ci && state._agentCopyFlashTs && (now - state._agentCopyFlashTs < 1500);
-      const icon = copyFlash ? `\x1b[38;5;114m✓${RESET}` : `\x1b[38;5;60m⧉${RESET}`;
+      const icon = copyFlash ? `${C.green}✓${RESET}` : `${C.border}⧉${RESET}`;
       const copyValue = typeof entry === "string" ? entry : (entry.full || entry.d || "");
       state._agentCopyTargets.push({ row: r, value: copyValue });
 
@@ -4809,11 +5002,10 @@ function renderAgentPanel(session, data, panelW, rows, state) {
       if (tsLabel) line += C.dimText + tsLabel + RESET + " ";
       if (toolLabel) {
         // Stable color per tool name (cycle through palette)
-        const TOOL_COLORS = [75, 114, 173, 180, 139, 109, 146, 215, 152, 167];
         let hash = 0;
         for (let c = 0; c < entryTool.length; c++) hash = ((hash << 5) - hash + entryTool.charCodeAt(c)) | 0;
-        const colorIdx = ((hash % TOOL_COLORS.length) + TOOL_COLORS.length) % TOOL_COLORS.length;
-        line += `\x1b[38;5;${TOOL_COLORS[colorIdx]}m` + toolLabel + RESET + " ";
+        const colorIdx = ((hash % C.toolColors.length) + C.toolColors.length) % C.toolColors.length;
+        line += `\x1b[38;5;${C.toolColors[colorIdx]}m` + toolLabel + RESET + " ";
       }
       line += C.hdrValue + display + RESET;
       const textLen = display.length;
@@ -4827,7 +5019,7 @@ function renderAgentPanel(session, data, panelW, rows, state) {
     if (hasScrollbar) {
       const trackPos = r - 1; // 0-based track position
       const isThumb = trackPos >= sbThumbStart && trackPos < sbThumbEnd;
-      line += isThumb ? "\x1b[38;5;245m┃" + RESET : "\x1b[38;5;238m│" + RESET;
+      line += isThumb ? C.dimText + "┃" + RESET : C.rule + "│" + RESET;
     }
 
     lines.push(line);
@@ -4923,16 +5115,16 @@ function renderConfigPanel(session, panelW, rows, state) {
       const isHover = r === state.configSubTabHover;
       // Copy icon (⧉) at the end of the label
       const copyFlash = state._configCopyFlash === r && state._configCopyFlashTs && (now - state._configCopyFlashTs < 1500);
-      const icon = copyFlash ? `\x1b[38;5;114m✓${RESET}` : `\x1b[38;5;60m⧉${RESET}`;
+      const icon = copyFlash ? `${C.green}✓${RESET}` : `${C.border}⧉${RESET}`;
       const maxLabelLen = CONFIG_TAB_WIDTH - 4; // space + label + space + icon + space
       const trimLabel = label.length > maxLabelLen ? label.slice(0, maxLabelLen) : label;
       const pad = " ".repeat(Math.max(0, maxLabelLen - trimLabel.length));
       if (isActive) {
-        line += " \x1b[1;38;5;255m" + trimLabel + RESET + pad + " " + icon + " ";
+        line += " " + C.brightFg + trimLabel + RESET + pad + " " + icon + " ";
       } else if (isHover) {
-        line += " \x1b[4;38;5;250m" + trimLabel + RESET + pad + " " + icon + " ";
+        line += " \x1b[4m" + C.softFg + trimLabel + RESET + pad + " " + icon + " ";
       } else {
-        line += " \x1b[38;5;245m" + trimLabel + RESET + pad + " " + icon + " ";
+        line += " " + C.dimText + trimLabel + RESET + pad + " " + icon + " ";
       }
       if (sec.copyPath) {
         state._configCopyTargets.push({ row: r, copyPath: sec.copyPath });
@@ -4945,7 +5137,7 @@ function renderConfigPanel(session, panelW, rows, state) {
     if (r < sections.length && r === state.configSubTab) {
       line += C.borderHi + "┃" + RESET;
     } else {
-      line += "\x1b[38;5;238m" + "│" + RESET;
+      line += C.rule + "│" + RESET;
     }
 
     // --- Content ---
@@ -4960,10 +5152,10 @@ function renderConfigPanel(session, panelW, rows, state) {
       const isThumb = r >= thumbStart && r < thumbEnd;
       const isScrollHover = state._configScrollbarHover && r >= thumbStart && r < thumbEnd;
       if (isThumb) {
-        const color = (isScrollHover || state._configScrollbarDrag) ? "\x1b[1;38;5;255m" : "\x1b[38;5;245m";
+        const color = (isScrollHover || state._configScrollbarDrag) ? C.brightFg : C.dimText;
         line = ansiSlice(line, 0, padTo) + color + "┃" + RESET;
       } else {
-        line = ansiSlice(line, 0, padTo) + "\x1b[38;5;238m" + "│" + RESET;
+        line = ansiSlice(line, 0, padTo) + C.rule + "│" + RESET;
       }
     }
 
@@ -5062,10 +5254,11 @@ function deleteSession(session) {
 function renderDeleteConfirm(session, width) {
   const modalW = Math.min(60, width - 6);
   const boxLeft = Math.floor((width - modalW) / 2);
-  const border = "\x1b[38;5;196;48;5;52m"; // red on dark-red
-  const labelC = "\x1b[1;38;5;203;48;5;52m";
-  const pathC = "\x1b[38;5;252;48;5;52m";
-  const hintC = "\x1b[38;5;245;48;5;52m";
+  const dlgBg = currentTheme === "light" ? "48;5;224m" : "48;5;52m"; // light: pink bg, dark: dark-red bg
+  const border = `\x1b[38;5;${currentTheme === "light" ? "160" : "196"};${dlgBg}`;
+  const labelC = `\x1b[1;38;5;${currentTheme === "light" ? "160" : "203"};${dlgBg}`;
+  const pathC = `\x1b[38;5;${currentTheme === "light" ? "59" : "252"};${dlgBg}`;
+  const hintC = `\x1b[38;5;${currentTheme === "light" ? "95" : "245"};${dlgBg}`;
   const inner = modalW - 2;
 
   const title = " Delete session? ";
@@ -5141,7 +5334,7 @@ function renderProcessesPanel(session, panelW, rows, state) {
   lines.push(headerLine);
   if (state) state._procHeaderRow = 1; // relative to panel content
 
-  const ruleColor = "\x1b[38;5;238m";
+  const ruleColor = C.rule;
   lines.push(ruleColor + "─".repeat(Math.min(inner, pidW + cpuW + memW + 20)) + RESET);
 
   // Process rows
@@ -5151,7 +5344,7 @@ function renderProcessesPanel(session, panelW, rows, state) {
     const cpuColor = p.ghost ? C.dimText : cpu > 80 ? C.chartBarHi : cpu > 40 ? C.chartBarMed : cpu > 5 ? C.chartBarLow : C.dimText;
     const memColor = p.ghost ? C.dimText : memMB > 500 ? C.costRed : memMB > 100 ? C.costYellow : C.dimText;
     const pidColor = p.ghost ? C.dimText : p.isRoot ? C.hdrLabel : C.dimText;
-    const cmdColor = p.ghost ? C.dimText : p.isRoot ? C.hdrValue : "\x1b[38;5;250m";
+    const cmdColor = p.ghost ? C.dimText : p.isRoot ? C.hdrValue : C.softFg;
 
     // Derive short process name from args (basename of first token)
     const firstToken = (p.args || "").split(" ")[0];
@@ -5192,10 +5385,11 @@ function renderProcessesPanel(session, panelW, rows, state) {
 function renderDeleteLiveBlocked(session, width) {
   const modalW = Math.min(60, width - 6);
   const boxLeft = Math.floor((width - modalW) / 2);
-  const border = "\x1b[38;5;214;48;5;58m"; // amber on dark-yellow
-  const labelC = "\x1b[1;38;5;221;48;5;58m";
-  const bodyC  = "\x1b[38;5;252;48;5;58m";
-  const hintC  = "\x1b[38;5;245;48;5;58m";
+  const dlgBg = currentTheme === "light" ? "48;5;230m" : "48;5;58m"; // light: light yellow bg, dark: dark-yellow bg
+  const border = `\x1b[38;5;${currentTheme === "light" ? "136" : "214"};${dlgBg}`;
+  const labelC = `\x1b[1;38;5;${currentTheme === "light" ? "136" : "221"};${dlgBg}`;
+  const bodyC  = `\x1b[38;5;${currentTheme === "light" ? "59" : "252"};${dlgBg}`;
+  const hintC  = `\x1b[38;5;${currentTheme === "light" ? "101" : "245"};${dlgBg}`;
   const inner  = modalW - 2;
 
   const pad = (s) => {
@@ -5275,7 +5469,7 @@ function renderSearchModal(state, width) {
   const displayQ = q.length > inputW ? q.slice(q.length - inputW) : q;
   const pad = Math.max(0, inputW - displayQ.length);
   const inputLine = C.normalFg + inputLabel + RESET
-    + "\x1b[1;38;5;255m" + displayQ + RESET
+    + C.brightFg + displayQ + RESET
     + "\x1b[7m \x1b[27m" + RESET // cursor block
     + " ".repeat(Math.max(0, pad - 1))
     + " ";
@@ -5331,10 +5525,10 @@ function renderInactivityModal(state, width) {
     const opt = INACTIVITY_OPTIONS[i];
     const isActive = state.inactivityFilter === opt.key;
     const isCursor = state._inactivityCursor === i;
-    const checkC = isActive ? "\x1b[1;38;5;114m" : "\x1b[38;5;240m";
+    const checkC = isActive ? "\x1b[1m" + C.green : C.rule;
     const check = checkC + (isActive ? "●" : "○") + RESET;
-    const textC = isCursor ? "\x1b[1;38;5;255;48;5;238m" : (isActive ? "\x1b[38;5;252m" : "\x1b[38;5;245m");
-    const bg    = isCursor ? "\x1b[48;5;238m" : "";
+    const textC = isCursor ? C.brightFg + (currentTheme === "light" ? "\x1b[48;5;252m" : "\x1b[48;5;238m") : (isActive ? C.softFg : C.dimText);
+    const bg    = isCursor ? (currentTheme === "light" ? "\x1b[48;5;252m" : "\x1b[48;5;238m") : "";
     const rowInner = bg + padTo(" " + check + " " + textC + opt.label + RESET + bg, inner) + RESET;
     lines.push(row(rowInner));
   }
@@ -5374,11 +5568,11 @@ function renderListTabBar(state, width) {
   topLine += C.hdrLabel + title + RESET + " ";
   topLine += bc + BOX.h.repeat(fillerLen) + RESET + " ";
   if (isLive) {
-    topLine += "\x1b[1;38;5;114m" + liveLabel + RESET;
+    topLine += "\x1b[1m" + C.green + liveLabel + RESET;
   } else if (state._liveHover) {
-    topLine += "\x1b[4;38;5;179m" + liveLabel + RESET;
+    topLine += "\x1b[4m" + C.panelTitle + liveLabel + RESET;
   } else {
-    topLine += "\x1b[38;5;245m" + liveLabel + RESET;
+    topLine += C.dimText + liveLabel + RESET;
   }
   topLine += " " + bc + BOX.tr + RESET;
 
@@ -5618,9 +5812,10 @@ function render(state) {
       if (cpos) {
         const label = col.label.trim() || "Status";
         const descLines = col.desc.split("\n");
-        const tipBorder = "\x1b[38;5;60;48;5;236m";
-        const tipLabel = "\x1b[1;38;5;75;48;5;236m";
-        const tipText = "\x1b[38;5;252;48;5;236m";
+        const tipBg = currentTheme === "light" ? "48;5;255m" : "48;5;236m";
+        const tipBorder = `\x1b[38;5;${currentTheme === "light" ? "249" : "60"};${tipBg}`;
+        const tipLabel = `\x1b[1;38;5;${currentTheme === "light" ? "33" : "75"};${tipBg}`;
+        const tipText = `\x1b[38;5;${currentTheme === "light" ? "59" : "252"};${tipBg}`;
         const headerStr = label + ": " + descLines[0];
         const maxLen = Math.max(headerStr.length, ...descLines.slice(1).map(l => l.length));
         const tipW = maxLen + 4;
@@ -6826,6 +7021,10 @@ function resolveProviderPlansFromArg(plan) {
 
 async function main() {
   const args = parseCliArgs();
+
+  // Detect and apply color theme (before any output)
+  const theme = args.theme || await detectTheme();
+  applyTheme(theme);
 
   // Fetch LiteLLM pricing (best effort, uses 24h disk cache)
   await fetchLitellmPricing();
