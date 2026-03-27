@@ -3854,18 +3854,33 @@ function renderHeader(stats, width, state) {
     k("d", "Delete Session"),
   ];
 
-  // --- Assemble: info then gap then two shortcut columns ---
-  const rowCount = Math.max(infoLines.length, col1.length, col2.length);
+  // --- Logo (right-aligned, k9s style) ---
+  const logoLines = [
+    `${C.accent}┏━┓${RESET}${C.hdrValue}┏━┓${RESET}${C.accent}╺┳╸${RESET}${C.hdrValue}┏━┓${RESET}${C.accent}┏━┓${RESET}`,
+    `${C.accent}┣━┫${RESET}${C.hdrValue}┃╺┓${RESET}${C.accent} ┃ ${RESET}${C.hdrValue}┃ ┃${RESET}${C.accent}┣━┛${RESET}`,
+    `${C.accent}╹ ╹${RESET}${C.hdrValue}┗━┛${RESET}${C.accent} ╹ ${RESET}${C.hdrValue}┗━┛${RESET}${C.accent}╹  ${RESET}`,
+  ];
+  const logoW = 18; // visible width of logo
+
+  // --- Assemble: info | shortcuts (2 cols) | logo ---
   const col1W = 26;
+  const rowCount = Math.max(infoLines.length, col1.length, col2.length, logoLines.length);
   for (let r = 0; r < rowCount; r++) {
     const left = r < infoLines.length ? infoLines[r] : "";
     const sc1 = r < col1.length ? col1[r] : "";
     const sc2 = r < col2.length ? col2[r] : "";
+    const logo = r < logoLines.length ? logoLines[r] : "";
     const leftPlain = left.replace(/\x1b\[[^m]*m/g, "");
     const sc1Plain = sc1.replace(/\x1b\[[^m]*m/g, "");
+    const sc2Plain = sc2.replace(/\x1b\[[^m]*m/g, "");
     const padLeft = Math.max(2, 50 - leftPlain.length);
     const padMid = Math.max(1, col1W - sc1Plain.length);
-    lines.push(" " + left + " ".repeat(padLeft) + sc1 + " ".repeat(padMid) + sc2);
+    // Right-align logo to terminal edge
+    const usedW = 1 + leftPlain.length + padLeft + sc1Plain.length + padMid + sc2Plain.length;
+    const logoGap = logo ? Math.max(2, width - usedW - logoW) : 0;
+    let row = " " + left + " ".repeat(padLeft) + sc1 + " ".repeat(padMid) + sc2;
+    if (logo) row += " ".repeat(logoGap) + logo;
+    lines.push(row);
   }
 
   return lines;
