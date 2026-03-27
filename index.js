@@ -3854,15 +3854,17 @@ function renderHeader(stats, width, state) {
     k("d", "Delete Session"),
   ];
 
-  // --- Logo (right-aligned, k9s figlet style) ---
-  const lc = C.accent;
+  // --- Logo (right-aligned, k9s figlet style, two-tone with bold structure) ---
+  const a = C.accent;      // a, t, p
+  const o = C.panelTitle;  // g, o
+  const B = BOLD;
   const logoLines = [
-    `${lc}              _              ${RESET}`,
-    `${lc}   __ _  __ _| |_  ___  _ __${RESET}`,
-    `${lc}  / _\` |/ _\` | __|/ _ \\| '_ \\${RESET}`,
-    `${lc} | (_| | (_| | |_| (_) | |_) |${RESET}`,
-    `${lc}  \\__,_|\\__, |\\__|\\___/| .__/${RESET}`,
-    `${lc}         |___/          |_|   ${RESET}`,
+    `${a}              ${B}_${RESET}              `,
+    `${a}   ${B}_${RESET}${a}_ _  ${o}${B}_${RESET}${o}_ ${B}_${RESET}${a}${B}|${RESET}${a} ${B}|${RESET}${a}_  ${o}${B}_${RESET}${o}__  ${a}${B}_${RESET}${a} __${RESET}`,
+    `${a}  ${B}/${RESET}${a} _\` ${B}|${RESET}${o}${B}/${RESET}${o} _\` ${B}|${RESET}${a} __${B}|/${RESET}${o} _ ${B}\\|${RESET}${a} '_ ${B}\\${RESET}`,
+    `${a} ${B}|${RESET}${a} (${B}_|${RESET}${a} ${B}|${RESET}${o} (${B}_|${RESET}${o} ${B}|${RESET}${a} ${B}|${RESET}${a}_${B}|${RESET}${o} (${B}_${RESET}${o}) ${B}|${RESET}${a} ${B}|${RESET}${a}_) ${B}|${RESET}`,
+    `${a}  ${B}\\${RESET}${a}__,${B}_|\\${RESET}${o}__, ${B}|\\${RESET}${a}__${B}|\\${RESET}${o}___${B}/${RESET}${a}${B}|${RESET}${a} .__${B}/${RESET}`,
+    `${o}         ${B}|${RESET}${o}___${B}/${RESET}${a}          ${B}|${RESET}${a}_${B}|${RESET}   `,
   ];
   const logoW = 31; // visible width of logo
 
