@@ -248,15 +248,16 @@ OPTIONS
   -h, --help             Show this help
 
 KEYBOARD SHORTCUTS (interactive mode)
-  j/k, arrows            Navigate sessions
-  Enter                  Open detail view
-  Tab                    Cycle bottom panel tabs (Info/Performance/Processes/Tool/Cost/Config)
-  \`                      Toggle Sessions/Live Sessions list view
-  1-6                    Jump to Info/Performance/Processes/Tool Activity/Cost/Config panel
+  0                      Focus session table
+  1                      Focus detail panel
+  j/k, arrows            Navigate focused panel
+  Left/Right (detail)    Switch detail panel tab
+  Tab                    Cycle detail panel tabs
+  \`                      Toggle Live filter
   F3 or /                Filter sessions by text
-  F6 or >                Sort-by panel
-  F7                     Filter sessions by age (1d / 1w / 1mo)
   F5 or r                Force refresh
+  F6                     Sort-by panel
+  F7                     Filter sessions by age (1d / 1w / 1mo)
   d                      Delete selected session (non-running only, with confirmation)
   q or F10               Quit
 
@@ -5298,24 +5299,26 @@ function renderHelpView(width, height) {
   const lines = [];
   lines.push(boxTop(width - 1, "Help"));
   lines.push("");
+  lines.push(BOLD + "  Panel Focus:" + RESET);
+  lines.push("    0                Focus session table");
+  lines.push("    1                Focus detail panel");
+  lines.push("");
   lines.push(BOLD + "  Navigation:" + RESET);
-  lines.push("    ↑/k, ↓/j        Move cursor up/down");
-  lines.push("    ←, →            Scroll left/right");
+  lines.push("    ↑/k, ↓/j        Navigate focused panel");
+  lines.push("    ←, →            Scroll left/right (sessions) or switch tab (detail)");
   lines.push("    PgUp, PgDn       Scroll page up/down");
-  lines.push("    Home, End        Jump to first/last session");
-  lines.push("    Enter, l         Open session detail");
+  lines.push("    Home, End        Jump to first/last");
+  lines.push("");
+  lines.push(BOLD + "  Tabs:" + RESET);
+  lines.push("    Tab              Cycle detail panel tabs");
+  lines.push("    `                Toggle Live filter");
   lines.push("");
   lines.push(BOLD + "  Sorting:" + RESET);
-  lines.push("    F6, >, <         Open sort-by panel");
+  lines.push("    F6               Open sort-by panel");
   lines.push("    P                Sort by status");
   lines.push("    M                Sort by memory");
   lines.push("    T                Sort by cost");
   lines.push("    Click header     Sort by that column");
-  lines.push("");
-  lines.push(BOLD + "  Tabs:" + RESET);
-  lines.push("    Tab              Cycle bottom panel tabs");
-  lines.push("    1-6              Switch to Info/Performance/Processes/Tool Activity/Cost/Config");
-  lines.push("    Shift+Tab / `    Toggle Live filter (show only running sessions)");
   lines.push("");
   lines.push(BOLD + "  Other:" + RESET);
   lines.push("    /, F3            Filter sessions by text");
@@ -5324,7 +5327,6 @@ function renderHelpView(width, height) {
   lines.push("    F5, r            Refresh session data");
   lines.push("    F1, ?, h         Show this help");
   lines.push("    q, F10           Quit");
-  lines.push("    Ctrl+C           Quit");
   lines.push("");
   lines.push(BOLD + "  Mouse:" + RESET);
   lines.push("    Click row        Select session");
