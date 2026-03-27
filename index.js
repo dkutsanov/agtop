@@ -3854,13 +3854,17 @@ function renderHeader(stats, width, state) {
     k("d", "Delete Session"),
   ];
 
-  // --- Logo (right-aligned, k9s style) ---
+  // --- Logo (right-aligned, k9s figlet style) ---
+  const lc = C.accent;
   const logoLines = [
-    `${C.accent}┏━┓${RESET}${C.hdrValue}┏━┓${RESET}${C.accent}╺┳╸${RESET}${C.hdrValue}┏━┓${RESET}${C.accent}┏━┓${RESET}`,
-    `${C.accent}┣━┫${RESET}${C.hdrValue}┃╺┓${RESET}${C.accent} ┃ ${RESET}${C.hdrValue}┃ ┃${RESET}${C.accent}┣━┛${RESET}`,
-    `${C.accent}╹ ╹${RESET}${C.hdrValue}┗━┛${RESET}${C.accent} ╹ ${RESET}${C.hdrValue}┗━┛${RESET}${C.accent}╹  ${RESET}`,
+    `${lc}              _              ${RESET}`,
+    `${lc}   __ _  __ _| |_  ___  _ __${RESET}`,
+    `${lc}  / _\` |/ _\` | __|/ _ \\| '_ \\${RESET}`,
+    `${lc} | (_| | (_| | |_| (_) | |_) |${RESET}`,
+    `${lc}  \\__,_|\\__, |\\__|\\___/| .__/${RESET}`,
+    `${lc}         |___/          |_|   ${RESET}`,
   ];
-  const logoW = 18; // visible width of logo
+  const logoW = 31; // visible width of logo
 
   // --- Assemble: info | shortcuts (2 cols) | logo ---
   const col1W = 26;
