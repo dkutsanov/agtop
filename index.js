@@ -3489,6 +3489,7 @@ function createState() {
     headerLines: 4, // number of header lines (boxTop + 2 content + boxBottom)
     _processMetrics: new Map(),
     _tier2Tick: TIER2_INTERVAL_TICKS - 1,
+    focusPanel: 0, // 0=session table, 1=detail panel
     bottomTab: 0, // 0=Info, 1=Performance, 2=Processes, 3=Tool Activity, 4=Cost, 5=Config
     hoverTab: -1, // tab index being hovered, -1 = none
     listTab: 0, // 0=Sessions, 1=Live Sessions
@@ -3846,6 +3847,8 @@ function renderHeader(stats, width, state) {
   const col2 = [
     k("F10, q", "Quit"),
     k("Tab", "Switch Panel"),
+    k("0", "Focus Sessions"),
+    k("1", "Focus Detail"),
     k("`", "Toggle Live"),
     k("d", "Delete Session"),
   ];
@@ -4005,7 +4008,8 @@ function renderColumnHeaders(state, width, boxW) {
   const inner = ansiSlice(line, state.hScroll, innerW);
   const visLen = ansiLen(inner);
   const pad = Math.max(0, innerW - visLen);
-  return C.border + BOX.v + RESET + inner + " ".repeat(pad) + C.border + BOX.v + RESET;
+  const bc = state.focusPanel === 0 ? C.borderHi : C.border;
+  return bc + BOX.v + RESET + inner + " ".repeat(pad) + bc + BOX.v + RESET;
 }
 
 /** Total width of all columns (flex column gets at least its content width). */
@@ -4325,7 +4329,8 @@ const MAX_PANEL = 30;
 const BOTTOM_TABS = ["Info", "Performance", "Processes", "Tool Activity", "Cost", "Config"];
 
 function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, hoverTab, state) {
-  const bc = C.border;
+  const detailFocused = state && state.focusPanel === 1;
+  const bc = detailFocused ? C.borderHi : C.border;
   const innerW = width - 4; // content inside │ ... │
   const innerH = panelHeight - 3; // top border + tab/rule line + bottom border
 
@@ -4341,8 +4346,11 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
   }
   const labelsEnd = col; // first char after last label
 
-  // --- Top border with tab labels ---
-  let topLine = bc + BOX.tl + BOX.h + " " + RESET;
+  // --- Top border with [1] prefix and tab labels ---
+  const prefix = "[1]";
+  const prefixW = prefix.length + 2; // ─[1]─
+  const prefixColor = detailFocused ? C.borderHi : C.dimText;
+  let topLine = bc + BOX.tl + BOX.h + prefixColor + prefix + RESET + bc + BOX.h + " " + RESET;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
     if (i > 0) topLine += "  ";
     const name = BOTTOM_TABS[i];
@@ -4355,12 +4363,13 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
     }
   }
   topLine += " ";
-  const remaining = Math.max(0, width - labelsEnd - 2);
+  const remaining = Math.max(0, width - labelsEnd - prefixW - 3);
   topLine += bc + BOX.h.repeat(remaining) + BOX.tr + RESET;
 
   // --- Underline rule: bright under active tab, dim elsewhere ---
+  // Pad rule to match prefix: ─[1]─ = 5 extra chars → total leading = 2 + prefixW
   const dimRule = C.rule;
-  let ruleLine = bc + BOX.v + RESET + dimRule + "──" + RESET;
+  let ruleLine = bc + BOX.v + RESET + dimRule + "─".repeat(prefixW) + "─" + RESET;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
     if (i > 0) ruleLine += dimRule + "──" + RESET;
     const name = BOTTOM_TABS[i];
@@ -4373,7 +4382,7 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
     }
   }
   ruleLine += dimRule + "─" + RESET;
-  const ruleRemain = Math.max(0, width - labelsEnd - 2);
+  const ruleRemain = Math.max(0, width - labelsEnd - prefixW - 2);
   ruleLine += dimRule + "─".repeat(ruleRemain) + RESET + bc + BOX.v + RESET;
 
   // --- Content ---
@@ -4392,9 +4401,9 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
   result.push(topLine);
   result.push(ruleLine);
   for (let i = 0; i < innerH; i++) {
-    result.push(boxLine(contentLines[i] || "", width));
+    result.push(boxLine(contentLines[i] || "", width, detailFocused));
   }
-  result.push(boxBottom(width));
+  result.push(boxBottom(width, detailFocused));
   return result;
 }
 
@@ -5658,36 +5667,45 @@ function renderInactivityModal(state, width) {
 // ---------------------------------------------------------------------------
 
 function renderListTabBar(state, width) {
-  const bc = C.border;
+  const bc = state.focusPanel === 0 ? C.borderHi : C.border;
 
   const totalCount = state.sessions.length;
-  const liveCount = state.sessions.filter((s) => !!s.process).length;
+  const filteredCount = state.filtered.length;
+  const hasFilter = state.searchQuery || state.inactivityFilter;
   const isLive = state.listTab === 1;
 
-  // Title with Live next to it
-  const title = `Sessions (${isLive ? liveCount + "/" : ""}${totalCount})`;
-  const liveLabel = isLive ? " [Live ●]" : " [Live ○]";
-  const centerBlock = title + liveLabel;
-  const centerBlockLen = centerBlock.length;
+  // Title: Sessions (3/12) or Sessions (12)
+  const countStr = hasFilter || isLive ? `${filteredCount}/${totalCount}` : `${totalCount}`;
+  const title = `Sessions (${countStr})`;
 
-  // Live button position for mouse click detection
-  // Center the block: ╭(1) + leftFiller + space + title + liveLabel + space + rightFiller + ╮(1)
-  const innerW = width - 2; // minus ╭ and ╮
-  const leftFill = Math.max(1, Math.floor((innerW - centerBlockLen - 2) / 2));
-  const rightFill = Math.max(1, innerW - leftFill - centerBlockLen - 2);
-  const liveBtnCol = 1 + leftFill + 1 + title.length; // 1-based
-  state._liveBtn = { col: liveBtnCol, len: liveLabel.length };
-
-  let topLine = bc + BOX.tl + BOX.h.repeat(leftFill) + " " + RESET;
-  topLine += C.hdrLabel + title + RESET;
-  if (isLive) {
-    topLine += "\x1b[1m" + C.green + liveLabel + RESET;
-  } else if (state._liveHover) {
-    topLine += "\x1b[4m" + C.panelTitle + liveLabel + RESET;
-  } else {
-    topLine += C.dimText + liveLabel + RESET;
+  // Filter indicators
+  let filterStr = "";
+  let filterPlain = "";
+  if (state.searchQuery) {
+    filterStr += ` ${C.searchFg}/${state.searchQuery}${RESET}`;
+    filterPlain += ` /${state.searchQuery}`;
   }
-  topLine += " " + bc + BOX.h.repeat(rightFill) + BOX.tr + RESET;
+  if (state.inactivityFilter) {
+    const ageLabel = { "1d": "1d", "1w": "1w", "1mo": "1mo" }[state.inactivityFilter] || state.inactivityFilter;
+    filterStr += ` ${C.panelTitle}Age:<${ageLabel}${RESET}`;
+    filterPlain += ` Age:<${ageLabel}`;
+  }
+  if (isLive) {
+    filterStr += ` ${C.green}Live${RESET}`;
+    filterPlain += ` Live`;
+  }
+
+  const prefix = "[0]";
+  // ╭─[0]─ Sessions (3/12) /text Age:<1w ──╮
+  const plainLen = 3 + prefix.length + 2 + title.length + filterPlain.length + 2; // ╭─[0]─ title filter ─╮
+  const rightFill = Math.max(1, width - plainLen);
+
+  state._liveBtn = { col: -1, len: 0 };
+
+  const prefixColor = state.focusPanel === 0 ? C.borderHi : C.dimText;
+  let topLine = bc + BOX.tl + BOX.h + prefixColor + prefix + RESET + bc + BOX.h + " " + RESET;
+  topLine += C.hdrLabel + title + RESET + filterStr + " ";
+  topLine += bc + BOX.h.repeat(rightFill) + BOX.tr + RESET;
 
   return topLine;
 }
@@ -5768,11 +5786,12 @@ function render(state) {
   screenLines.push(renderColumnHeaders(state, width, boxW));
 
   const innerW = boxW - 2; // inside │ borders
+  const listBc = state.focusPanel === 0 ? C.borderHi : C.border;
   const wrapRow = (content) => {
     const clipped = ansiSlice(content, 0, innerW);
     const visLen = ansiLen(clipped);
     const pad = Math.max(0, innerW - visLen);
-    return C.border + BOX.v + RESET + clipped + " ".repeat(pad) + C.border + BOX.v + RESET;
+    return listBc + BOX.v + RESET + clipped + " ".repeat(pad) + listBc + BOX.v + RESET;
   };
   if (list.length === 0 && state.listTab === 1) {
     // Empty Live tab
@@ -5790,7 +5809,7 @@ function render(state) {
       }
     }
   }
-  screenLines.push(boxBottom(boxW));
+  screenLines.push(boxBottom(boxW, state.focusPanel === 0));
 
   // Bottom detail panels (tabbed)
   const selected = list[state.selectedRow] || null;
@@ -6188,6 +6207,26 @@ function copyToClipboard(text) {
   process.stdout.write(`\x1b]52;c;${b64}\x07`);
 }
 
+/** Scroll the active detail panel by delta lines. */
+function scrollDetailPanel(state, delta) {
+  const tab = state.bottomTab;
+  const scrollKey = tab === 0 ? "infoScroll" : tab === 2 ? "procScroll"
+    : tab === 3 ? "agentToolScroll" : tab === 4 ? "costScroll"
+    : tab === 5 ? "configScroll" : null;
+  if (!scrollKey) return;
+  const sbKey = tab === 0 ? "_infoScrollbar" : tab === 4 ? "_costScrollbar"
+    : tab === 5 ? "_configScrollbar" : null;
+  const maxScroll = sbKey && state[sbKey] ? state[sbKey].maxScroll : 9999;
+  if (delta === -Infinity) {
+    state[scrollKey] = 0;
+  } else if (delta === Infinity) {
+    state[scrollKey] = maxScroll;
+  } else {
+    state[scrollKey] = Math.max(0, Math.min(maxScroll, state[scrollKey] + delta));
+  }
+  state.dirty = true;
+}
+
 function handleEvent(event, state) {
   if (!event) return;
 
@@ -6346,12 +6385,8 @@ function handleEvent(event, state) {
         case "P": setSortColumn(state, "status"); return;
         case "M": setSortColumn(state, "mem"); return;
         case "T": setSortColumn(state, "cost"); return;
-        case "1": state.bottomTab = 0; state.dirty = true; saveUiPrefs({ bottomTab: 0, listTab: state.listTab }); return;
-        case "2": state.bottomTab = 1; state.dirty = true; saveUiPrefs({ bottomTab: 1, listTab: state.listTab }); return;
-        case "3": state.bottomTab = 2; state.dirty = true; saveUiPrefs({ bottomTab: 2, listTab: state.listTab }); return;
-        case "4": state.bottomTab = 3; state.dirty = true; saveUiPrefs({ bottomTab: 3, listTab: state.listTab }); return;
-        case "5": state.bottomTab = 4; state.dirty = true; saveUiPrefs({ bottomTab: 4, listTab: state.listTab }); return;
-        case "6": state.bottomTab = 5; state.dirty = true; saveUiPrefs({ bottomTab: 5, listTab: state.listTab }); return;
+        case "0": state.focusPanel = 0; state.dirty = true; return;
+        case "1": state.focusPanel = 1; state.dirty = true; return;
         case "`": switchListTab(state); return;
         default: return;
       }
@@ -6377,48 +6412,77 @@ function handleEvent(event, state) {
     }
   }
 
-  // Navigation
+  // Navigation — depends on which panel is focused
   switch (event.type) {
     case "up":
-      if (state.selectedRow > 0) {
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, -1);
+      } else if (state.selectedRow > 0) {
         state.selectedRow--;
         state.dirty = true;
       }
       return;
     case "down":
-      if (state.selectedRow < listLen - 1) {
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, 1);
+      } else if (state.selectedRow < listLen - 1) {
         state.selectedRow++;
         state.dirty = true;
       }
       return;
     case "pageup":
-      state.selectedRow = Math.max(0, state.selectedRow - bodyHeight);
-      state.dirty = true;
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, -bodyHeight);
+      } else {
+        state.selectedRow = Math.max(0, state.selectedRow - bodyHeight);
+        state.dirty = true;
+      }
       return;
     case "pagedown":
-      state.selectedRow = Math.min(listLen - 1, state.selectedRow + bodyHeight);
-      state.dirty = true;
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, bodyHeight);
+      } else {
+        state.selectedRow = Math.min(listLen - 1, state.selectedRow + bodyHeight);
+        state.dirty = true;
+      }
       return;
     case "home":
-      state.selectedRow = 0;
-      state.hScroll = 0;
-      state.dirty = true;
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, -Infinity);
+      } else {
+        state.selectedRow = 0;
+        state.hScroll = 0;
+        state.dirty = true;
+      }
       return;
     case "end":
-      state.selectedRow = Math.max(0, listLen - 1);
-      state.dirty = true;
+      if (state.focusPanel === 1) {
+        scrollDetailPanel(state, Infinity);
+      } else {
+        state.selectedRow = Math.max(0, listLen - 1);
+        state.dirty = true;
+      }
       return;
     case "left":
-      if (state.hScroll > 0) {
+      if (state.focusPanel === 1) {
+        state.bottomTab = (state.bottomTab - 1 + BOTTOM_TABS.length) % BOTTOM_TABS.length;
+        saveUiPrefs({ bottomTab: state.bottomTab, listTab: state.listTab });
+        state.dirty = true;
+      } else if (state.hScroll > 0) {
         state.hScroll = Math.max(0, state.hScroll - 4);
         state.dirty = true;
       }
       return;
-    case "right": {
-      state.hScroll += 4;
-      state.dirty = true;
+    case "right":
+      if (state.focusPanel === 1) {
+        state.bottomTab = (state.bottomTab + 1) % BOTTOM_TABS.length;
+        saveUiPrefs({ bottomTab: state.bottomTab, listTab: state.listTab });
+        state.dirty = true;
+      } else {
+        state.hScroll += 4;
+        state.dirty = true;
+      }
       return;
-    }
     case "scroll_up":
       if (state.bottomTab === 0 && state._configPanelTop && event.row >= state._configPanelTop) {
         if (state.infoScroll > 0) { state.infoScroll--; state.dirty = true; }
