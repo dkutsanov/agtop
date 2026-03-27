@@ -4332,58 +4332,61 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
   const detailFocused = state && state.focusPanel === 1;
   const bc = detailFocused ? C.borderHi : C.border;
   const innerW = width - 4; // content inside │ ... │
-  const innerH = panelHeight - 3; // top border + tab/rule line + bottom border
+  const innerH = panelHeight - 2; // top border + bottom border
 
   // Build tab positions first (shared between top border and rule line)
-  // Layout: ╭─ Session  System  Tool Activity ──────────╮
-  //         │  ───────━━━━━━━━──────────────────────────  │
-  const tabParts = []; // [{col, len, idx}]
-  let col = 3; // after "╭─ " or "│  "
+  // Layout: ╭─[1]─ Info  Performance  Tool Activity ──────────╮
+  //         │      ────━━━━━━━━━━━━──────────────────────────  │
+  // Top line visible: ╭─[1]─ Tab1  Tab2  Tab3 ─────╮ = width chars
+  // Chars before tabs: ╭(1) ─(1) [1](3) ─(1) space(1) = 7
+  // Chars after tabs:  space(1) ─×fill ╮(1) = fill + 2
+  const prefix = "[1]";
+  const beforeTabs = 7; // ╭─[1]─
+  const tabParts = [];
+  let col = beforeTabs;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
-    if (i > 0) col += 2; // 2-space gap
+    if (i > 0) col += 3; // space + dash + space
     tabParts.push({ col, len: BOTTOM_TABS[i].length, idx: i });
     col += BOTTOM_TABS[i].length;
   }
-  const labelsEnd = col; // first char after last label
-
-  // --- Top border with [1] prefix and tab labels ---
-  const prefix = "[1]";
-  const prefixW = prefix.length + 2; // ─[1]─
+  const afterTabs = col; // visible position after last tab name
   const prefixColor = detailFocused ? C.borderHi : C.dimText;
+
+  // Top border
   let topLine = bc + BOX.tl + BOX.h + prefixColor + prefix + RESET + bc + BOX.h + " " + RESET;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
-    if (i > 0) topLine += "  ";
+    if (i > 0) topLine += " " + bc + BOX.h + RESET + " ";
     const name = BOTTOM_TABS[i];
     if (i === activeTab) {
       topLine += C.panelTitle + name + RESET;
     } else if (i === hoverTab) {
-      topLine += "\x1b[4m" + C.panelTitle + name + RESET; // underline on hover
+      topLine += "\x1b[4m" + C.panelTitle + name + RESET;
     } else {
       topLine += C.dimText + name + RESET;
     }
   }
   topLine += " ";
-  const remaining = Math.max(0, width - labelsEnd - prefixW - 3);
-  topLine += bc + BOX.h.repeat(remaining) + BOX.tr + RESET;
+  const topFill = Math.max(0, width - afterTabs - 2); // -2 for " ╮" → actually trailing space already emitted, so just ╮
+  topLine += bc + BOX.h.repeat(topFill) + BOX.tr + RESET;
 
-  // --- Underline rule: bright under active tab, dim elsewhere ---
-  // Pad rule to match prefix: ─[1]─ = 5 extra chars → total leading = 2 + prefixW
+  // Underline rule: │ + dashes aligning with tabs + │ = width
+  // Chars: │(1) + (beforeTabs-1) dashes + tab underlines + trailing dashes + │(1) = width
   const dimRule = C.rule;
-  let ruleLine = bc + BOX.v + RESET + dimRule + "─".repeat(prefixW) + "─" + RESET;
+  const leadDashes = beforeTabs - 1; // everything between │ and first tab
+  let ruleLine = bc + BOX.v + RESET + dimRule + "─".repeat(leadDashes) + RESET;
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
     if (i > 0) ruleLine += dimRule + "──" + RESET;
     const name = BOTTOM_TABS[i];
     if (i === activeTab) {
       ruleLine += C.borderHi + "━".repeat(name.length) + RESET;
     } else if (i === hoverTab) {
-      ruleLine += C.dimText + "━".repeat(name.length) + RESET; // subtle underline on hover
+      ruleLine += C.dimText + "━".repeat(name.length) + RESET;
     } else {
       ruleLine += dimRule + "─".repeat(name.length) + RESET;
     }
   }
-  ruleLine += dimRule + "─" + RESET;
-  const ruleRemain = Math.max(0, width - labelsEnd - prefixW - 2);
-  ruleLine += dimRule + "─".repeat(ruleRemain) + RESET + bc + BOX.v + RESET;
+  const ruleFill = Math.max(0, width - afterTabs - 1); // -1 for trailing │
+  ruleLine += dimRule + "─".repeat(ruleFill) + RESET + bc + BOX.v + RESET;
 
   // --- Content ---
   let contentLines;
@@ -4399,7 +4402,6 @@ function renderBottomPanels(session, data, plan, width, panelHeight, activeTab, 
 
   const result = [];
   result.push(topLine);
-  result.push(ruleLine);
   for (let i = 0; i < innerH; i++) {
     result.push(boxLine(contentLines[i] || "", width, detailFocused));
   }
@@ -5696,15 +5698,16 @@ function renderListTabBar(state, width) {
   }
 
   const prefix = "[0]";
-  // ╭─[0]─ Sessions (3/12) /text Age:<1w ──╮
-  const plainLen = 3 + prefix.length + 2 + title.length + filterPlain.length + 2; // ╭─[0]─ title filter ─╮
-  const rightFill = Math.max(1, width - plainLen);
+  // visible: ╭(1) ─(1) [0](3) ─(1) ·(1) title filter ·(1) ─×fill ╮(1) = width
+  // fill = width - 9 - title.length - filterPlain.length
+  const rightFill = Math.max(1, width - 9 - title.length - filterPlain.length);
 
   state._liveBtn = { col: -1, len: 0 };
 
   const prefixColor = state.focusPanel === 0 ? C.borderHi : C.dimText;
   let topLine = bc + BOX.tl + BOX.h + prefixColor + prefix + RESET + bc + BOX.h + " " + RESET;
-  topLine += C.hdrLabel + title + RESET + filterStr + " ";
+  const titleColor = state.focusPanel === 0 ? C.hdrLabel : C.dimText;
+  topLine += titleColor + title + RESET + filterStr + " ";
   topLine += bc + BOX.h.repeat(rightFill) + BOX.tr + RESET;
 
   return topLine;
@@ -5758,10 +5761,11 @@ function render(state) {
   // Collect all screen lines
   const screenLines = [];
   for (const line of headerLines) screenLines.push(line);
-  state.headerLines = headerLines.length; // update for mouse position calculations
+  screenLines.push(""); // breathing room before session table
+  state.headerLines = headerLines.length + 1; // update for mouse position calculations
 
   // Bottom panels height (adaptive)
-  const usedByHeader = headerLines.length;
+  const usedByHeader = headerLines.length + 1;
   const totalBody = height - usedByHeader - 1; // -1 footer
   const rawPanelH = Math.min(MAX_PANEL, Math.max(MIN_PANEL, Math.floor(totalBody * 0.4)));
   const panelHeight = Math.min(rawPanelH, Math.max(3, totalBody - 5)); // ensure list gets at least 5 rows
