@@ -26,9 +26,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ldegio/agtop.git"
+    "url": "https://github.com/dkutsanov/agtop.git"
   },
-  "homepage": "https://github.com/ldegio/agtop",
+  "homepage": "https://github.com/dkutsanov/agtop",
   "author": "Loris Degioanni",
   "license": "GPL-2.0-only"
 }

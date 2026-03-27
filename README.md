@@ -2,7 +2,7 @@
 
 Run with:
 ```
-npx github:ldegio/agtop
+npx github:dkutsanov/agtop
 ```
 
 Your window into what your AI coding agents are actually doing. agtop is a top-style terminal dashboard that tracks every Claude Code and Codex session on your machine -- spend, token usage, context pressure, CPU load, tool invocations, and more -- all in one place, live.
@@ -37,10 +37,10 @@ Your window into what your AI coding agents are actually doing. agtop is a top-s
 
 ```
 # Run the TUI (no install needed)
-npx github:ldegio/agtop
+npx github:dkutsanov/agtop
 
 # Or install globally
-npm install -g github:ldegio/agtop
+npm install -g github:dkutsanov/agtop
 
 # Run the installed version
 agtop
