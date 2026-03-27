@@ -936,6 +936,19 @@ function notFoundLine(text) {
   return `${C.rule}${text}${RESET}`;
 }
 
+/** Extract description from YAML frontmatter (--- delimited block with description: field). */
+function extractFrontmatterDesc(content) {
+  if (!content) return "";
+  const lines = content.split("\n");
+  if (lines[0].trim() !== "---") return "";
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") break;
+    const m = lines[i].match(/^\s*description:\s*"?([^"]*)"?\s*$/);
+    if (m) return m[1].trim();
+  }
+  return "";
+}
+
 /** Sanitize a line for terminal display: replace tabs, strip \r and other control chars. */
 function sanitizeLine(line) {
   return line.replace(/\t/g, "    ").replace(/\r/g, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1a]/g, "");
@@ -991,7 +1004,7 @@ function extractClaudeConfig(session) {
   }
   // Primary copy path: project CLAUDE.md if it exists, else global
   const instrCopyPath = cwd ? join(cwd, "CLAUDE.md") : globalCmPath;
-  sections.push({ label: "Instructions", lines: claudeMdLines, copyPath: instrCopyPath });
+  const secInstructions = { label: "Instructions", lines: claudeMdLines, copyPath: instrCopyPath };
 
   // 2. Auto-memories
   const memLines = [];
@@ -1004,7 +1017,7 @@ function extractClaudeConfig(session) {
     }
   }
   if (memLines.length === 0) memLines.push(notFoundLine("No memory files found"));
-  sections.push({ label: "Memory", lines: memLines, copyPath: memCopyPath });
+  const secMemory = { label: "Memory", lines: memLines, copyPath: memCopyPath };
 
   // 3. Skills
   const skillLines = [];
@@ -1024,7 +1037,7 @@ function extractClaudeConfig(session) {
     }
   }
   if (skillLines.length === 0) skillLines.push(notFoundLine("No skills installed (~/.claude/skills/)"));
-  sections.push({ label: "Skills", lines: skillLines, copyPath: skillsDirPath });
+  const secSkills = { label: "Skills", lines: skillLines, copyPath: skillsDirPath };
 
   // 4. MCP Servers
   const mcpLines = [];
@@ -1059,7 +1072,7 @@ function extractClaudeConfig(session) {
     }
   }
   if (mcpLines.length === 0) mcpLines.push(notFoundLine("No MCP servers configured"));
-  sections.push({ label: "MCP", lines: mcpLines, copyPath: mcpCopyPath });
+  const secMcp = { label: "MCP", lines: mcpLines, copyPath: mcpCopyPath };
 
   // 5. Permissions
   const permLines = [];
@@ -1086,8 +1099,44 @@ function extractClaudeConfig(session) {
     } catch {}
   }
   if (permLines.length === 0) permLines.push(`${C.rule}No permission rules configured${RESET}`);
-  sections.push({ label: "Permissions", lines: permLines, copyPath: settingsPath });
+  const secPermissions = { label: "Permissions", lines: permLines, copyPath: settingsPath };
 
+  // 6. Commands (user-defined slash commands)
+  const cmdLines = [];
+  const globalCmdsDir = join(HOME, ".claude", "commands");
+  const projCmdsDir = cwd ? join(cwd, ".claude", "commands") : null;
+  for (const [dir, scope] of [[globalCmdsDir, "global"], [projCmdsDir, "project"]]) {
+    if (!dir || !dirExists(dir)) continue;
+    for (const f of listDir(dir)) {
+      if (!f.endsWith(".md")) continue;
+      const name = f.replace(/\.md$/, "");
+      const content = safeReadFile(join(dir, f), 1024);
+      const desc = extractFrontmatterDesc(content);
+      cmdLines.push(`${C.green}/${name}${RESET}  ${C.dimText}(${scope})${RESET}` + (desc ? `  ${C.dimText}${desc}${RESET}` : ""));
+    }
+  }
+  if (cmdLines.length === 0) cmdLines.push(notFoundLine("No custom commands"));
+  const secCommands = { label: "Commands", lines: cmdLines, copyPath: globalCmdsDir };
+
+  // 7. Agents (user-defined agents)
+  const agentLines = [];
+  const globalAgentsDir = join(HOME, ".claude", "agents");
+  const projAgentsDir = cwd ? join(cwd, ".claude", "agents") : null;
+  for (const [dir, scope] of [[globalAgentsDir, "global"], [projAgentsDir, "project"]]) {
+    if (!dir || !dirExists(dir)) continue;
+    for (const f of listDir(dir)) {
+      if (!f.endsWith(".md")) continue;
+      const name = f.replace(/\.md$/, "");
+      const content = safeReadFile(join(dir, f), 1024);
+      const desc = extractFrontmatterDesc(content);
+      agentLines.push(`${C.green}${name}${RESET}  ${C.dimText}(${scope})${RESET}` + (desc ? `  ${C.dimText}${desc}${RESET}` : ""));
+    }
+  }
+  if (agentLines.length === 0) agentLines.push(notFoundLine("No custom agents"));
+  const secAgents = { label: "Agents", lines: agentLines, copyPath: globalAgentsDir };
+
+  // Order: config first, then extensions/tools
+  sections.push(secInstructions, secPermissions, secMemory, secCommands, secAgents, secSkills, secMcp);
   return sections;
 }
 
@@ -2642,7 +2691,7 @@ const LIST_TABS = ["Sessions"]; // Single unified list
 
 // Shared column defs
 const COL_STATUS = {
-  key: "status", label: "LIVE", width: 4, align: "left",
+  key: "status", label: "LIVE", width: 5, align: "left",
   desc: "Running status: ● running, ○ stopped",
   render: (s) => s.process ? "●" : "○",
   compare: (a, b) => (a.process ? 1 : 0) - (b.process ? 1 : 0),
@@ -2654,7 +2703,7 @@ const COL_LAST = {
   compare: (a, b) => (b.last_active || "").localeCompare(a.last_active || ""),
 };
 const COL_DURATION = {
-  key: "duration", label: "DURATION", width: 8, align: "right",
+  key: "duration", label: "DURATION", width: 9, align: "right",
   desc: "Session duration (first to last activity)",
   render: (s) => sessionDuration(s),
   compare: (a, b) => {
@@ -2738,7 +2787,7 @@ const COMPACT_THRESHOLD = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   ? parseInt(process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, 10) / 100
   : 0.835; // Claude compacts at ~83.5% of context window
 const COL_CTX = {
-  key: "ctx", label: "%CONTEXT", width: 8, align: "right", desc: "Context window usage (% until auto-compact)",
+  key: "ctx", label: "%CONTEXT", width: 9, align: "right", desc: "Context window usage (% until auto-compact)",
   render: (s) => {
     if (!s.list_context) return C.rule + "─" + RESET;
     if (s.list_context.compacting) return "COMPCT";
@@ -5103,7 +5152,7 @@ function renderAgentPanel(session, data, panelW, rows, state) {
 // Render: config panel
 // ---------------------------------------------------------------------------
 
-const CONFIG_TAB_WIDTH = 14; // width of the vertical tab sidebar
+const CONFIG_TAB_WIDTH = 18; // width of the vertical tab sidebar
 
 /** Render the Config panel with vertical sub-tabs and scrollable content. */
 function renderConfigPanel(session, panelW, rows, state) {
