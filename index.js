@@ -1042,36 +1042,77 @@ function extractClaudeConfig(session) {
 
   // 4. MCP Servers
   const mcpLines = [];
+  let mcpCopyPath = null;
+  const pushMcpServer = (name, cfg, scope) => {
+    mcpLines.push(`${C.amber}${name}${RESET}  ${C.dimText}(${scope})${RESET}`);
+    if (cfg.type) mcpLines.push(`  type: ${cfg.type}`);
+    if (cfg.command) {
+      const cmd = Array.isArray(cfg.args) ? `${cfg.command} ${cfg.args.join(" ")}` : cfg.command;
+      mcpLines.push(`  command: ${cmd}`);
+    }
+    if (cfg.url) mcpLines.push(`  url: ${cfg.url}`);
+    if (cfg.env) {
+      const envKeys = Object.keys(cfg.env);
+      if (envKeys.length) mcpLines.push(`  env: ${envKeys.join(", ")}`);
+    }
+  };
+  // ~/.claude.json — user-scoped & per-project MCP servers (from claude mcp add)
+  const claudeJsonPath = join(HOME, ".claude.json");
+  const claudeJsonContent = safeReadFile(claudeJsonPath, 524288);
+  if (claudeJsonContent) {
+    try {
+      const claudeJson = JSON.parse(claudeJsonContent);
+      if (claudeJson.mcpServers && typeof claudeJson.mcpServers === "object") {
+        if (!mcpCopyPath) mcpCopyPath = claudeJsonPath;
+        for (const [name, cfg] of Object.entries(claudeJson.mcpServers)) {
+          if (typeof cfg !== "object") continue;
+          pushMcpServer(name, cfg, "user");
+        }
+      }
+      if (cwd && claudeJson.projects && claudeJson.projects[cwd] && typeof claudeJson.projects[cwd].mcpServers === "object") {
+        const projMcp = claudeJson.projects[cwd].mcpServers;
+        if (Object.keys(projMcp).length > 0) {
+          if (!mcpCopyPath) mcpCopyPath = claudeJsonPath;
+          for (const [name, cfg] of Object.entries(projMcp)) {
+            if (typeof cfg !== "object") continue;
+            pushMcpServer(name, cfg, "project");
+          }
+        }
+      }
+    } catch {}
+  }
+  // ~/.claude/settings.json — global MCP servers
   const settingsPath = join(HOME, ".claude", "settings.json");
   const settingsContent = safeReadFile(settingsPath);
   if (settingsContent) {
     try {
       const settings = JSON.parse(settingsContent);
-      if (settings.mcpServers) {
+      if (settings.mcpServers && typeof settings.mcpServers === "object") {
+        if (!mcpCopyPath) mcpCopyPath = settingsPath;
         for (const [name, cfg] of Object.entries(settings.mcpServers)) {
-          mcpLines.push(`${C.amber}${name}${RESET}  ${C.dimText}(global)${RESET}`);
-          if (cfg.command) mcpLines.push(`  command: ${cfg.command}`);
+          if (typeof cfg !== "object") continue;
+          pushMcpServer(name, cfg, "global");
         }
       }
     } catch {}
   }
-  let mcpCopyPath = settingsPath;
+  // <cwd>/.mcp.json — project-file MCP servers
   if (cwd) {
     const mcpJsonPath = join(cwd, ".mcp.json");
     const mcpJson = safeReadFile(mcpJsonPath);
     if (mcpJson) {
-      mcpCopyPath = mcpJsonPath;
+      if (!mcpCopyPath) mcpCopyPath = mcpJsonPath;
       try {
         const mcp = JSON.parse(mcpJson);
         const servers = mcp.mcpServers || mcp;
         for (const [name, cfg] of Object.entries(servers)) {
           if (typeof cfg !== "object") continue;
-          mcpLines.push(`${C.amber}${name}${RESET}  ${C.dimText}(project)${RESET}`);
-          if (cfg.command) mcpLines.push(`  command: ${cfg.command}`);
+          pushMcpServer(name, cfg, "local");
         }
       } catch {}
     }
   }
+  if (!mcpCopyPath) mcpCopyPath = settingsPath;
   if (mcpLines.length === 0) mcpLines.push(notFoundLine("No MCP servers configured"));
   const secMcp = { label: "MCP", lines: mcpLines, copyPath: mcpCopyPath };
 
