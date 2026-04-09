@@ -3907,7 +3907,7 @@ function renderHeader(stats, width, state) {
     `${a}  ${B}\\${RESET}${a}__,${B}_|\\${RESET}${o}__, ${B}|\\${RESET}${a}__${B}|\\${RESET}${o}___${B}/${RESET}${a}${B}|${RESET}${a} .__${B}/${RESET}`,
     `${o}         ${B}|${RESET}${o}___${B}/${RESET}${a}          ${B}|${RESET}${a}_${B}|${RESET}   `,
   ];
-  const logoW = 31; // visible width of logo
+  const logoW = 30; // visible width of logo (max across all lines)
 
   // --- Assemble: info | shortcuts (2 cols) | logo ---
   const col1W = 26;
@@ -5766,7 +5766,12 @@ function renderListTabBar(state, width) {
   // fill = width - 9 - title.length - filterPlain.length
   const rightFill = Math.max(1, width - 9 - title.length - filterPlain.length);
 
-  state._liveBtn = { col: -1, len: 0 };
+  // Live button position: 7 prefix chars + title + preceding filter text + 1 space before "Live"
+  if (isLive) {
+    state._liveBtn = { col: 8 + title.length + filterPlain.length - 4, len: 4 };
+  } else {
+    state._liveBtn = { col: -1, len: 0 };
+  }
 
   const prefixColor = state.focusPanel === 0 ? C.borderHi : C.dimText;
   let topLine = bc + BOX.tl + BOX.h + prefixColor + prefix + RESET + bc + BOX.h + " " + RESET;
@@ -5883,7 +5888,7 @@ function render(state) {
   const selected = list[state.selectedRow] || null;
   const panelPlan = selected ? (selected.provider === "codex" ? state.codexPlan : state.claudePlan) : null;
   state._tabBarRow = screenLines.length + 1; // 1-based row of the tab bar
-  state._configPanelTop = screenLines.length + 3; // 1-based: tab bar + rule line → first content row
+  state._configPanelTop = screenLines.length + 2; // 1-based: tab bar top border + first content row
   const bottomLines = renderBottomPanels(selected, state.panelData, panelPlan, boxW, panelHeight, state.bottomTab, state.hoverTab, state);
   for (const pl of bottomLines) screenLines.push(pl);
 
@@ -6210,9 +6215,9 @@ function splitEscapeSequences(str) {
 function columnAtX(x, hScroll, state) {
   const cols = state ? activeColumns(state) : SUMMARY_COLUMNS;
   const adjusted = x + (hScroll || 0);
-  let pos = 1; // 1-based terminal columns
+  let pos = 2; // 1-based terminal columns, skip left │ border
   for (const col of cols) {
-    const w = col.flex ? 999 : col.width + 1; // +1 for space separator
+    const w = col.flex ? 999 : col.width + 4; // +4 for 4-space separator
     if (adjusted >= pos && adjusted < pos + w) return col.key;
     pos += w;
   }
@@ -6222,20 +6227,20 @@ function columnAtX(x, hScroll, state) {
 /** Return {x, width} (0-based screen coords) for a column key, accounting for hScroll. */
 function columnScreenPos(colKey, hScroll, state) {
   const cols = state ? activeColumns(state) : SUMMARY_COLUMNS;
-  let pos = 1; // 1-based
+  let pos = 2; // 1-based, skip left │ border
   for (const col of cols) {
     const w = col.flex ? 999 : col.width;
     if (col.key === colKey) return { x: pos - 1 - (hScroll || 0), w };
-    pos += w + (col.flex ? 0 : 1); // +1 separator
+    pos += w + (col.flex ? 0 : 4); // +4 separator (4 spaces)
   }
   return null;
 }
 
 /** Given a 1-based column, return which tab index (0-2) was clicked, or -1. */
 function tabAtX(col) {
-  let pos = 4; // skip ╭─ + space (1-based)
+  let pos = 8; // skip ╭─[1]─ (7 visible chars, 1-based)
   for (let i = 0; i < BOTTOM_TABS.length; i++) {
-    if (i > 0) pos += 2; // 2-space gap between tabs
+    if (i > 0) pos += 3; // space + dash + space
     const w = BOTTOM_TABS[i].length;
     if (col >= pos && col < pos + w) return i;
     pos += w;
